@@ -1,0 +1,375 @@
+:root {
+  --ui: rgba(255, 255, 255, 0.92);
+  --ui-dim: rgba(255, 255, 255, 0.55);
+  --shadow: 0 1px 14px rgba(0, 0, 0, 0.55);
+  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-synthesis: none;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #0b0f1a;
+  overscroll-behavior: none;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: crosshair;
+}
+
+canvas {
+  display: block;
+}
+
+/* ---------------------------------------------------------------- hud ---- */
+
+.hud {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  color: var(--ui);
+  text-shadow: var(--shadow);
+}
+
+.instruments {
+  position: absolute;
+  left: max(20px, env(safe-area-inset-left));
+  bottom: max(20px, env(safe-area-inset-bottom));
+  transition: opacity 200ms ease;
+}
+
+.instruments.dim {
+  opacity: 0.25;
+}
+
+.readout {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.readout .value {
+  font-size: 44px;
+  font-weight: 300;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+
+.readout .unit {
+  font-size: 15px;
+  color: var(--ui-dim);
+}
+
+.sub {
+  display: flex;
+  gap: 14px;
+  margin-top: 6px;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: lowercase;
+  color: var(--ui-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.sub .best {
+  color: var(--ui);
+}
+
+.sub .low {
+  color: #ffc07a;
+}
+
+/* -------------------------------------------------------------- vario ---- */
+
+.vario {
+  position: absolute;
+  right: max(22px, env(safe-area-inset-right));
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.vario .track {
+  position: relative;
+  width: 4px;
+  height: 132px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.14);
+  overflow: hidden;
+}
+
+.vario .fill {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  border-radius: 2px;
+}
+
+.vario .fill.up {
+  background: #7ef7c4;
+}
+
+.vario .fill.down {
+  background: #7fb4ff;
+}
+
+.vario .mid {
+  position: absolute;
+  top: 50%;
+  left: -3px;
+  width: 10px;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.varioLabel {
+  font-size: 11px;
+  color: var(--ui-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.stall {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #ffb4a2;
+  animation: blink 520ms steps(2, end) infinite;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+/* ------------------------------------------------------ prompt/result ---- */
+
+.prompt,
+.result {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+}
+
+.prompt .title {
+  font-size: 30px;
+  font-weight: 300;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+}
+
+.prompt .meta,
+.result .meta {
+  margin-top: 8px;
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  color: var(--ui-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.prompt .hint {
+  margin-top: 26px;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  color: var(--ui-dim);
+  animation: pulse 2.6s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.result .fanfare {
+  font-size: 13px;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: #7ef7c4;
+  margin-bottom: 10px;
+}
+
+.result .big {
+  font-size: 68px;
+  font-weight: 200;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+
+.result .big .unit {
+  font-size: 20px;
+  color: var(--ui-dim);
+}
+
+.result .again {
+  margin-top: 30px;
+  font-size: 13px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+/* ------------------------------------------------------- audio toggle ---- */
+
+.audioToggle {
+  position: fixed;
+  right: 10px;
+  bottom: 10px;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 6px;
+  background: rgba(8, 11, 18, 0.28);
+  backdrop-filter: blur(6px);
+  color: rgba(255, 255, 255, 0.45);
+  cursor: pointer;
+  transition: color 160ms ease, border-color 160ms ease;
+  z-index: 11;
+}
+
+.audioToggle:hover {
+  color: rgba(255, 255, 255, 0.9);
+  border-color: rgba(255, 255, 255, 0.32);
+}
+
+.audioToggle:focus-visible {
+  outline: 1px solid rgba(255, 255, 255, 0.6);
+  outline-offset: 2px;
+}
+
+/* --------------------------------------------------------- tuning ui ---- */
+
+.tuneHint {
+  position: fixed;
+  right: 44px;
+  bottom: 10px;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 5px;
+  pointer-events: none;
+}
+
+.tune {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  width: 288px;
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+  padding: 10px 12px 14px;
+  border-radius: 10px;
+  background: rgba(8, 11, 18, 0.82);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  z-index: 10;
+}
+
+.tuneHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.tuneHead strong {
+  flex: 1;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-weight: 500;
+}
+
+.tune button {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: inherit;
+  border-radius: 5px;
+  padding: 2px 7px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.tune button:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.tuneGroupName {
+  margin: 12px 0 4px;
+  color: rgba(255, 255, 255, 0.4);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.tuneRow {
+  display: grid;
+  grid-template-columns: 96px 1fr 46px;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+}
+
+.tuneRow label {
+  color: rgba(255, 255, 255, 0.6);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tuneRow .num {
+  text-align: right;
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.tune input[type='range'] {
+  width: 100%;
+  accent-color: #7ef7c4;
+}
+
+.dayNav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dayNav span {
+  min-width: 34px;
+  text-align: center;
+}
+
+@media (max-width: 640px) {
+  .readout .value {
+    font-size: 34px;
+  }
+  .result .big {
+    font-size: 52px;
+  }
+  .tune,
+  .tuneHint {
+    display: none;
+  }
+}
