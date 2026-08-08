@@ -33,6 +33,10 @@ export class Trail {
       transparent: true,
       blending: AdditiveBlending,
       depthWrite: false,
+      // Never fog an additive material: fog mixes *toward* the fog colour, and
+      // adding fog-coloured fragments tints the line cream at distance no
+      // matter what colour it is. The age fade is this line's own fog.
+      fog: false,
     })
     this.object = new Line(this.geometry, material)
     this.object.frustumCulled = false

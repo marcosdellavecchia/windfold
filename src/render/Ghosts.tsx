@@ -68,6 +68,8 @@ function ghostLine(path: FlightSample[], brightness: number): Line {
     transparent: true,
     blending: AdditiveBlending,
     depthWrite: false,
+    // Same rule as the wake: additive + fog adds fog colour, it does not fade.
+    fog: false,
   })
   const line = new Line(geometry, material)
   line.frustumCulled = false

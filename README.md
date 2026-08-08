@@ -563,6 +563,30 @@ noises, each field a hair lighter or darker, some cut for hay gold, the seams
 between them darkened into hedgerows. A patchwork of worked fields is *the*
 iconic view from a glider, and it was free — vertex colours, once, at build.
 
+**The plane pass.** The aircraft is the one object on screen every frame, dead
+centre, and it was still three triangles with a line behind it. Now: the dart has
+real fold structure, each panel its own flat-shaded facet with its own tint, left
+and right deliberately not quite matching — somebody folded this. Sunlight
+transmits through the paper: a wing between the eye and a low sun glows warm, the
+single most paper thing paper does, done in four shader lines. A soft shadow blob
+hugs the terrain below and fades in under ~70 m — part grounding, part
+instrument, because when you are skimming a ridge the shadow reads your clearance
+better than the HUD does. The plane even dims under the cloud shadows, via a
+TypeScript twin of the shaders' field, so it belongs to the same weather as the
+ground it flies over.
+
+The wake stayed a thin line, and that was a decision, not an omission. A tapered
+ribbon version was built — corkscrewing through banked climbs, width and
+brightness riding the airspeed — and it photographed beautifully and was too
+much: the wake is a detail behind the aircraft, not a second protagonist, and a
+filled additive surface glows with its whole area where a line glows with a
+pixel. Reverted on sight. What survived from the experiment is a real bug fix:
+**additive materials must never participate in fog** — fog mixes *toward* its
+colour, so adding fog-coloured fragments tints any additive line cream at
+distance regardless of its own colour. The wake and the ghost trails both now
+opt out. When the ghost bundle lands, the ribbon geometry is on the shelf if the
+score-band trails want more presence than a line.
+
 **Music.** Synthesised in the browser, not streamed — same reasoning as the terrain.
 Rule 5 forbids third-party requests and the load budget is three seconds; a few minutes
 of ambient piano is a megabyte and a round trip, whereas this is a few kilobytes of code

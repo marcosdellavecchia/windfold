@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react'
+import { useMemo } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { BufferAttribute, BufferGeometry, MeshLambertMaterial, Vector2 } from 'three'
 import type { World } from '../sim/world'
@@ -51,10 +51,11 @@ export function Terrain({ world }: { world: World }) {
   const geometry = useMemo(() => buildGeometry(world), [world])
   const material = useMemo(() => makeMaterial(world), [world])
 
-  const clock = useRef(0)
+  // Increment the material's own clock rather than a persistent one: water and
+  // the plane restart their shadow clocks at every world switch, and the shade
+  // only lines up across the shoreline if all three agree on the time.
   useFrame((_, dt) => {
-    clock.current += Math.min(dt, 0.1)
-    material.userData.uCloudTime.value = clock.current
+    material.userData.uCloudTime.value += Math.min(dt, 0.1)
   })
 
   return <mesh geometry={geometry} material={material} frustumCulled={false} />

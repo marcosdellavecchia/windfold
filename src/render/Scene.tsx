@@ -1,8 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
-import { Group, MathUtils, Vector3, type PerspectiveCamera } from 'three'
+import {
+  CircleGeometry,
+  Group,
+  MathUtils,
+  Mesh,
+  MeshBasicMaterial,
+  Vector3,
+  type PerspectiveCamera,
+} from 'three'
 import type { World } from '../sim/world'
 import { Flight } from '../sim/flight'
+import { sampleGradient } from '../sim/terrain'
 import { Ghosts, type GhostData } from './Ghosts'
 import { TUNING } from '../sim/tuning'
 import { surfaceHeight } from '../sim/terrain'
@@ -80,6 +89,28 @@ function Simulation({ world, planeRef, trail }: SimProps) {
 
   const stats = useRef({ best: 0, attempts: 0 })
   const [ghosts, setGhosts] = useState<GhostData>({ attempts: [], best: null })
+
+  // The plane's shadow: a soft dark blob hugging the terrain below. Not a
+  // shadow map — a disc that fades in under ~70 m of altitude, which is
+  // exactly when height matters: skimming a ridge or timing a flare, the
+  // shadow reads your clearance better than the HUD number does.
+  const blob = useMemo(() => {
+    const geo = new CircleGeometry(1, 20)
+    geo.rotateX(-Math.PI / 2)
+    const m = new Mesh(
+      geo,
+      new MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0, depthWrite: false }),
+    )
+    m.frustumCulled = false
+    return m
+  }, [])
+  useEffect(
+    () => () => {
+      blob.geometry.dispose()
+      ;(blob.material as MeshBasicMaterial).dispose()
+    },
+    [blob],
+  )
   const prevPhase = useRef(flight.phase)
   const cam = useRef({
     pos: new Vector3(),
@@ -162,6 +193,23 @@ function Simulation({ world, planeRef, trail }: SimProps) {
     if (plane) {
       plane.position.copy(flight.pos)
       plane.quaternion.copy(flight.quat)
+    }
+
+    // --- ground shadow --------------------------------------------------------
+    const groundY = flight.pos.y - flight.aglHeight
+    const fade = 1 - MathUtils.smoothstep(flight.aglHeight, 14, 70)
+    const blobMat = blob.material as MeshBasicMaterial
+    if (fade <= 0.02) {
+      blobMat.opacity = 0
+    } else {
+      blobMat.opacity = 0.26 * fade
+      // Wider and softer as the plane climbs, like a real penumbra.
+      blob.scale.setScalar(2.4 + flight.aglHeight * 0.09)
+      blob.position.set(flight.pos.x, groundY + 0.4, flight.pos.z)
+      // Lie on the slope rather than hovering flat inside it.
+      sampleGradient(world.heightfield, flight.pos.x, flight.pos.z, GRAD)
+      NORMAL.set(-GRAD.x, 1, -GRAD.z).normalize()
+      blob.quaternion.setFromUnitVectors(UP, NORMAL)
     }
 
     // --- camera -------------------------------------------------------------
@@ -251,5 +299,14 @@ function Simulation({ world, planeRef, trail }: SimProps) {
     flushHud(dt, phaseChanged)
   })
 
-  return <Ghosts data={ghosts} />
+  return (
+    <>
+      <Ghosts data={ghosts} />
+      <primitive object={blob} />
+    </>
+  )
 }
+
+const GRAD = { x: 0, z: 0 }
+const NORMAL = new Vector3()
+const UP = new Vector3(0, 1, 0)
