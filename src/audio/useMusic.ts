@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Music } from './music'
 
-const STORAGE_KEY = 'papertrail.muted'
+const STORAGE_KEY = 'windfold.muted'
 
 const readMuted = () => {
   try {

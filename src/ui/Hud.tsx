@@ -29,7 +29,7 @@ export function Hud({ world, par }: { world: World; par: number }) {
 
       {s.phase === 'ready' && (
         <div className="prompt">
-          <div className="title">Paper Trail</div>
+          <div className="title">Windfold</div>
           <div className="meta">
             Day {world.day} · {world.palette.mood} {world.biome} · wind{' '}
             {Math.round(world.air.windSpeed)} m/s
@@ -37,6 +37,8 @@ export function Hud({ world, par }: { world: World; par: number }) {
           {/* The day's completable goal: beat the paper pilot and the day is won. */}
           <div className="par">par {metres(par)} m</div>
           <div className="hint">Move to steer · click or space to launch</div>
+          {/* Dev affordances, worth surfacing while the game is being tested. */}
+          <div className="keys">R for another world · T for tuning</div>
         </div>
       )}
 

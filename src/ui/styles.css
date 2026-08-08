@@ -238,6 +238,14 @@ canvas {
   }
 }
 
+/* Quieter than the hint and it does not pulse: these are for the testers. */
+.prompt .keys {
+  margin-top: 10px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.38);
+}
+
 .result .fanfare {
   font-size: 13px;
   letter-spacing: 0.3em;

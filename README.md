@@ -1,6 +1,6 @@
-# Paper Trail
+# Windfold
 
-> A daily paper-plane gliding game in the browser. One landscape a day, as many flights as you like, best distance is your record.
+> A daily paper-plane gliding game in the browser. One landscape a day, as many flights as you like, best distance is your record. *Fly windfolded.*
 
 **Status:** build steps 1 and 2 done. Flight model, a 12 km procedural world with seven
 biomes, forests, lakes and sea, cumulus, birds, seeded daily worlds, air (wind /
@@ -9,8 +9,12 @@ ambient music, and the crash → retry loop all work. Everything from step 3 onw
 players, no share card, no streak, no persistence of any kind.
 See [Built so far](#built-so-far).
 
-**Name:** `Paper Trail` is a working title — decide before the backend lands, since it
-propagates through the whole codebase.
+**Name:** `Windfold` — decided. The working title was `Paper Trail`, dropped because
+Newfangled Games' 2024 puzzle game owns that name in search. Windfold was chosen for
+its near-zero web presence and because it names the mechanic: the wind, and the fold
+that flies in it. The *blindfolded* echo lives on as the tagline, "fly windfolded."
+The rename landed before deploy on purpose — the seed string carries the name, so
+renaming reshuffles every world, which must never happen once scores exist.
 
 ---
 
@@ -173,14 +177,14 @@ The signature visual: a valley threaded with dozens of glowing arcs.
 Plain text to clipboard, plus Web Share API where available.
 
 ```
-✈️  Paper Trail #142
+✈️  Windfold #142
 1,847 m · 4 flights
 
 ▁▂▄▆█▇▅▃▂▁▁
 🟦 Top 12% today
 Streak: 6 🔥
 
-papertrail.app
+windfold.app
 ```
 
 - The block strip is the **altitude profile of your best flight**, derived from its recorded path. It's a picture of how you flew, which is what makes it worth sharing.
@@ -272,7 +276,8 @@ src/render/       R3F components; all transforms driven from one useFrame
   Water.tsx       fresnel + glitter + ripple, no render target
   Birds.tsx       flocks circling the nearest columns, and one skein passing through
   Motes.tsx       near-field dust, wrapped around the camera
-  Sky.tsx         gradient dome: sun, moon, cirrus, counter-glow, rays
+  Sky.tsx         gradient dome: sun, moon, cirrus, counter-glow, rays, ice halo,
+                  daylight stars, falling stars
   atmosphere.ts   the single fog constant every shader has to agree on
 src/audio/        Web Audio synthesis; no React inside music.ts
   music.ts        the day's generated score
@@ -412,6 +417,18 @@ where they belong: perturbing the normal for the fresnel and the sun glitter. Re
 water seen from an aircraft does not change colour as a wave passes. It changes colour
 where it is deeper, and that does not move at all.
 
+The waterline was the other fault, and it was not the one it looked like. A shaking,
+stair-stepped coast pattern-matches to z-fighting, but offsetting the water's depth
+did nothing measurable — because the coast was the raw *depth intersection* of the
+water plane and the terrain, and MSAA cannot antialias an edge that is computed per
+pixel rather than drawn as geometry. The water now carries the heightfield as a
+16-bit texture (two packed bytes, because filtering float textures needs an extension
+mobile does not reliably have, and the decode is linear so bilinear filtering still
+reconstructs the exact height) and fades its own alpha out over the last two metres
+of depth. A soft wet edge instead of an intersection line: nothing left to alias,
+nothing left to shake, and the same texture read gives true shallows that shelve the
+last dozen metres toward every shore for free.
+
 Cumulus is the piece of scenery that is also a mechanic. Dust columns only carry about
 2 km, which is one glide; clouds carry to the fog limit, so the sky is a map of where
 the lift is and "head for the next cloud" is a rule players teach themselves.
@@ -432,6 +449,19 @@ the one thing in the list that is real. Near the camera, a few hundred motes wra
 around the aircraft on a torus: the whole rest of the world is at least a hundred
 metres away, so without them there is no parallax at all and 21 m/s reads as a
 panning painting.
+
+The second pass leaned further in, still all inside the one sky shader. The sun got
+a limb gradient — white-hot core cooling to the day's colour at the rim, because a
+flat disc reads as a sticker — and an ice-halo ring at a shrunken 22 degrees, warm
+inside and cold outside like the real one, breathing slowly. The moon got maria off
+the same value noise as everything else, limb darkening, a whisper of lunar corona,
+and earthshine, so its dark side is a cool ghost instead of a hole. Stars hang in
+the deep blue of the upper dome in broad daylight — wrong the way the daytime moon
+is wrong, and for the same reason — keeping clear of the sun, dimming under cirrus,
+each twinkling on its own period, denser on some days than others. And roughly once
+a minute a falling star crosses the high sky and is gone inside a second; each one
+draws its own start point and heading, and most fall outside the dome entirely,
+which is what makes catching one feel like luck rather than a scheduled effect.
 
 The grade is the other half of it. Six biomes on a strict rotation means the same
 biome returns every six days, and a hue wobble was not enough to make those two days
@@ -497,6 +527,15 @@ the speed into a soft arrival is the game's core energy trade, asked for one fin
 time. Alto's made the smooth landing its signature feel-good beat; this is that,
 sized for a game where every previous flight ended in a wall of flat green.
 
+**Own ghosts.** The client half of the ghost system is in: every finished attempt
+stays on screen as a faint white line, the last five plus the personal best, which
+draws brighter because it is the line being flown against. Additive-blended `Line`
+strips off the recorded 10 Hz path — the same visual language as the live wake —
+with depth-test on, so a route behind a hill reads as behind the hill. White on
+purpose: the cyan/purple/pink bands are reserved for other players' trails, so the
+two layers will never fight when the backend lands. Paths live in memory only, per
+the persistence table; six extra draw calls, no new materials science.
+
 **Music.** Synthesised in the browser, not streamed — same reasoning as the terrain.
 Rule 5 forbids third-party requests and the load budget is three seconds; a few minutes
 of ambient piano is a megabyte and a round trip, whereas this is a few kilobytes of code
@@ -541,6 +580,8 @@ is −29 dBFS RMS / −14 dBFS peak: present, but under conversation level.
 2. ~~**Procedural terrain, palettes, fog, camera.**~~ Mostly done — six biomes, seeded palettes, distance fog, chase camera with roll. Still no clouds.
 3. **Daily seeding and determinism.** Seeding is in and the harness verifies a rebuild is byte-identical; still need the two-browsers check.
 4. **Flight recording, own-attempt ghosts, backend, other players' ghosts.**
+   Recording and own-attempt ghosts are done — the remaining half of this step is
+   the backend and everyone else's trails.
 5. **Share card, streak, best-and-attempts screen.**
 
 ---

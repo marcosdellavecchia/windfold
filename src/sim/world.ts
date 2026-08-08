@@ -49,7 +49,7 @@ function isoDayIndex(iso: string): number {
 }
 
 export function buildWorld(day: number): World {
-  const seed = hashSeed(`paper-trail/${day}`)
+  const seed = hashSeed(`windfold/${day}`)
   const rng = mulberry32(seed)
 
   // A strict rotation, so consecutive days are guaranteed to be different biomes.

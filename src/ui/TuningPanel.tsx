@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { TUNING, resetTuning, type Tuning } from '../sim/tuning'
 import { BIOME_ORDER } from '../sim/palette'
+import { setPointerCaptured } from '../input'
 import type { World } from '../sim/world'
 
 interface Row {
@@ -85,6 +86,13 @@ export function TuningPanel({ day, onDay, world }: { day: number; onDay: (d: num
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [onDay])
+
+  // While the panel is up, the pointer belongs to it: sliders must be usable
+  // mid-flight without also steering the aircraft. Keyboard flying still works.
+  useEffect(() => {
+    setPointerCaptured(open)
+    return () => setPointerCaptured(false)
+  }, [open])
 
   if (!open) return <div className="tuneHint" data-ui>T</div>
 

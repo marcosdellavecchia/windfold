@@ -22,6 +22,21 @@ export function setCommitHandler(fn: Action) {
 
 const keys = { left: false, right: false, up: false, down: false }
 
+let captured = false
+
+/**
+ * While a UI surface owns the pointer — the tuning panel, mainly — the pointer
+ * and touch stop steering and clicks commit nothing, so adjusting a slider
+ * mid-flight does not also roll the aircraft into a hill. The keyboard keeps
+ * flying: it is the testing fallback, and one hand on the sliders with the
+ * other on WASD is exactly the tuning workflow. The pointer position keeps
+ * being tracked underneath, so steering resumes from wherever the cursor
+ * actually is the moment the panel closes.
+ */
+export function setPointerCaptured(v: boolean) {
+  captured = v
+}
+
 let touchActive = false
 let touchOriginX = 0
 let touchOriginY = 0
@@ -113,6 +128,7 @@ export function attachInput(target: HTMLElement | Window = window): () => void {
   }
 
   const onPointerUp = (e: PointerEvent) => {
+    if (captured) return
     if ((e.target as HTMLElement)?.closest?.('[data-ui]')) return
     onCommit()
   }
@@ -140,7 +156,10 @@ export function attachInput(target: HTMLElement | Window = window): () => void {
 
 /** Resolve the current control axes. Called once per frame by the simulation. */
 export function readAxis(dt: number): Axis {
-  if (sawTouch) {
+  if (captured) {
+    axis.x = 0
+    axis.y = 0
+  } else if (sawTouch) {
     if (!touchActive) {
       const k = 1 - Math.pow(0.001, dt)
       touchX += (0 - touchX) * k
