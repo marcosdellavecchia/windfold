@@ -19,6 +19,14 @@ export interface World {
   launch: LaunchSite
   /** Unit vector pointing at the sun. Low, for long shadows and rim light. */
   sunDir: Vector3
+  /**
+   * Unit vector pointing at the moon, which is up in daylight roughly half the
+   * time and is the one object in the sky that is obviously not weather. It sits
+   * away from the sun, high enough to clear the horizon haze.
+   */
+  moonDir: Vector3
+  /** -1 to 1. Which side the terminator falls on, and how far across the disc. */
+  moonPhase: number
 }
 
 export function dayNumber(now: Date = new Date()): number {
@@ -49,7 +57,7 @@ export function buildWorld(day: number): World {
   const n = BIOME_ORDER.length
   const biome = BIOME_ORDER[((day % n) + n) % n]
 
-  const palette = buildPalette(biome, rng)
+  const palette = buildPalette(biome, seed)
   const heightfield = generateHeightfield(biome, rng)
   const air = generateAir(heightfield, rng)
   const launch = findLaunchSite(heightfield, air, rng)
@@ -62,7 +70,18 @@ export function buildWorld(day: number): World {
     Math.sin(sunAz) * Math.cos(sunEl),
   ).normalize()
 
-  return { day, seed, biome, palette, heightfield, air, launch, sunDir }
+  // Kept well away from the sun — a moon rendered inside the solar halo is just a
+  // smudge — and above the fog band, so it reads as a disc rather than a blur.
+  const moonAz = sunAz + Math.PI + randRange(rng, -0.9, 0.9)
+  const moonEl = randRange(rng, 0.3, 0.85)
+  const moonDir = new Vector3(
+    Math.cos(moonAz) * Math.cos(moonEl),
+    Math.sin(moonEl),
+    Math.sin(moonAz) * Math.cos(moonEl),
+  ).normalize()
+  const moonPhase = randRange(rng, -0.95, 0.95)
+
+  return { day, seed, biome, palette, heightfield, air, launch, sunDir, moonDir, moonPhase }
 }
 
 /** Yaw that points the aircraft's nose along (dx, dz). Forward is -Z. */

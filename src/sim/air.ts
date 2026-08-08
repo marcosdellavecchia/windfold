@@ -52,11 +52,49 @@ export function generateAir(hf: Heightfield, rng: Rng): Air {
   // lift that the weaker wind would otherwise lose.
   const windSpeed = randRange(rng, 2, 5.5)
 
+  // Flat country is the failure mode of this game's air: ridge lift is
+  // `wind · ∇terrain`, so ground with no gradient has none, and a day that is all
+  // ambient sink is a day with no decisions in it. Real flat country compensates
+  // the same way this does — convection organizes into streets, rows of thermals
+  // aligned downwind. Below ~520 m of relief the columns start snapping to a
+  // street lattice, and by ~200 m (a field day) the organization is total: the
+  // sky becomes rows of cumulus and the game becomes "pick a street and run it".
+  // Driven by measured relief rather than by biome, so a flat plain-landform day
+  // in any biome gets the same rescue.
+  const relief = hf.max - hf.min
+  const street = clamp01((520 - relief) / 320)
+  const streetSpacing = randRange(rng, 1400, 2000)
+  const streetPhase = randRange(rng, 0, streetSpacing)
+  // Skewed 20-35 degrees off the wind, and not because real streets are — real
+  // streets run dead downwind. So does the launch heading, and a lift corridor
+  // laid under the opening glide is a free ride: the first downwind-aligned build
+  // of this handed a hands-off flight 6.1 km, 3x the tuning target. At this angle
+  // a hands-off glide falls out of its street inside a kilometre, while a player
+  // who banks to track the line keeps it. The skew is what makes the street a
+  // skill rather than a ramp.
+  const streetDir = windDir + (rng() < 0.5 ? 1 : -1) * randRange(rng, 0.35, 0.6)
+  // Unit vector across the streets: the coordinate they are spaced along.
+  const crossX = -Math.sin(streetDir)
+  const crossZ = Math.cos(streetDir)
+
+  // More columns on organized days — streets concentrate lift into lines, which
+  // leaves the ground between them emptier than a random scatter would be, and
+  // a chosen street has to be able to carry a whole flight.
+  const target = Math.round(THERMAL_COUNT * (1 + street * 0.5))
+
   const thermals: Thermal[] = []
   let guard = 0
-  while (thermals.length < THERMAL_COUNT && guard++ < 4000) {
-    const x = randRange(rng, -HALF_WORLD * 0.88, HALF_WORLD * 0.88)
-    const z = randRange(rng, -HALF_WORLD * 0.88, HALF_WORLD * 0.88)
+  while (thermals.length < target && guard++ < 6000) {
+    let x = randRange(rng, -HALF_WORLD * 0.88, HALF_WORLD * 0.88)
+    let z = randRange(rng, -HALF_WORLD * 0.88, HALF_WORLD * 0.88)
+    if (rng() < street) {
+      const cross = crossX * x + crossZ * z
+      const snapped = Math.round((cross - streetPhase) / streetSpacing) * streetSpacing + streetPhase
+      const shift = snapped - cross + randRange(rng, -150, 150)
+      x += crossX * shift
+      z += crossZ * shift
+      if (Math.abs(x) > HALF_WORLD * 0.88 || Math.abs(z) > HALF_WORLD * 0.88) continue
+    }
     const base = sampleHeight(hf, x, z)
     // Thermals form over sun-warmed ground, not over water.
     if (hf.hasWater && base < hf.waterLevel + 20) continue
@@ -70,7 +108,9 @@ export function generateAir(hf: Heightfield, rng: Rng): Air {
       x,
       z,
       radius,
-      strength: randRange(rng, 7, 13),
+      // A modest boost where streets are organized — flat ground has no ridge
+      // lift to fall back on, so the columns carry the whole day.
+      strength: randRange(rng, 7, 13) * (1 + street * 0.2),
       top: base + randRange(rng, 520, 980),
       base,
     })

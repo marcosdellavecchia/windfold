@@ -39,8 +39,59 @@ export const FLORA: Record<BiomeId, FloraSpec> = {
   valley: { density: 17, treeline: 0.82, floor: 0.0, broadleaf: 0.6, maxSlope: 1.0, height: [18, 34], accent: 0.22 },
   // Almost nothing survives; a few charred stands low on the flanks.
   volcanic: { density: 2, treeline: 0.32, floor: 0.02, broadleaf: 0.2, maxSlope: 0.6, height: [12, 22], accent: 0.04 },
+  // Hedgerow country: broadleaf copses between open pasture, grass nearly to the top.
+  field: { density: 9, treeline: 0.94, floor: 0.01, broadleaf: 0.85, maxSlope: 0.6, height: [12, 24], accent: 0.2 },
   // Palms and tropical canopy right down to the beaches.
   archipelago: { density: 12, treeline: 0.7, floor: 0.005, broadleaf: 0.88, maxSlope: 0.75, height: [14, 24], accent: 0.14 },
+}
+
+/* -------------------------------------------------------------- understory ---- */
+
+export type DetailKind = 'boulder' | 'cactus' | 'palm' | 'shrub' | 'spire' | 'bale'
+
+/**
+ * The second thing that grows — or in half the biomes, does not grow at all.
+ *
+ * Trees only ever stand where the forest mask is high, which by design leaves every
+ * bare slope, scree field, playa and beach in the game completely empty. Those are
+ * most of the ground on four of the six biomes. The understory fills them with one
+ * more instanced species per biome, placed by the rules trees are placed *against*:
+ * boulders want the steep ground trees are excluded from, palms want the shoreline
+ * the forest is deliberately held back from.
+ */
+export interface DetailSpec {
+  kind: DetailKind
+  /** Scatter attempts per 384 m cell, same cells as the trees. */
+  density: number
+  /** Terrain gradient window. Boulders want slope; cacti and palms want none. */
+  slope: [number, number]
+  /** Height window, as a fraction of the day's range. */
+  band: [number, number]
+  /** Metres, before per-instance variation. */
+  height: [number, number]
+  /** Chance of surviving inside forest. 1 = grows among the trees quite happily. */
+  inForest: number
+  /** If > 0, only within this many metres above the waterline. */
+  shore: number
+}
+
+export const DETAIL: Record<BiomeId, DetailSpec> = {
+  // Talus and glacial erratics, on exactly the slopes the spruce cannot hold.
+  alpine: { kind: 'boulder', density: 8, slope: [0.35, 1.7], band: [0.05, 0.95], height: [4, 11], inForest: 0.35, shore: 0 },
+  // Saguaro in the washes. The only vertical thing on a mesa day.
+  mesa: { kind: 'cactus', density: 6, slope: [0, 0.34], band: [0.08, 0.62], height: [4, 9], inForest: 1, shore: 0 },
+  // Broken rock along the cliff tops and headlands.
+  coastal: { kind: 'boulder', density: 6, slope: [0.3, 1.5], band: [0, 0.9], height: [3, 8], inForest: 0.3, shore: 0 },
+  // Bramble and scrub filling the clearings between the broadleaf stands.
+  valley: { kind: 'shrub', density: 11, slope: [0, 0.7], band: [0, 0.78], height: [2, 4.5], inForest: 1, shore: 0 },
+  // Basalt columns. Cooling lava cracks into hexagons, so these are hexagonal.
+  volcanic: { kind: 'spire', density: 5, slope: [0.1, 1.2], band: [0.05, 0.88], height: [8, 22], inForest: 1, shore: 0 },
+  // Hay bales on the open flats, never under the trees. Twice life size, because
+  // a true 1.5 m drum vanishes from 300 m up — the same slightly-wrong-on-purpose
+  // licence as the flattened sun, spent on the ground.
+  field: { kind: 'bale', density: 6, slope: [0, 0.22], band: [0.03, 0.85], height: [2.4, 3.4], inForest: 0, shore: 0 },
+  // Palms right down the beach, in the band the forest mask is told to avoid.
+  archipelago: { kind: 'palm', density: 9, slope: [0, 0.36], band: [0, 0.4], height: [10, 18], inForest: 1, shore: 95 },
 }
 
 /* --------------------------------------------------------- the forest mask ---- */

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { buildWorld, dayNumber } from './sim/world'
 import { Scene } from './render/Scene'
@@ -19,6 +19,15 @@ export default function App() {
   })
   const world = useMemo(() => buildWorld(day), [day])
 
+  // Keep ?day= in sync when the day is changed from the panel or the R shortcut,
+  // so any world found while testing survives a reload and can be linked to.
+  const changeDay = useCallback((d: number) => {
+    setDay(d)
+    const url = new URL(window.location.href)
+    url.searchParams.set('day', String(d))
+    window.history.replaceState(null, '', url)
+  }, [])
+
   const music = useMusic(world.seed)
 
   useEffect(() => attachInput(), [])
@@ -33,9 +42,10 @@ export default function App() {
       >
         <Scene world={world} />
       </Canvas>
+      <div className="dream" aria-hidden="true" />
       <Hud world={world} />
       <AudioToggle muted={music.muted} onToggle={music.toggle} />
-      <TuningPanel day={day} onDay={setDay} />
+      <TuningPanel day={day} onDay={changeDay} world={world} />
     </>
   )
 }

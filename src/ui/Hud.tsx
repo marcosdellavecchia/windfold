@@ -31,7 +31,8 @@ export function Hud({ world }: { world: World }) {
         <div className="prompt">
           <div className="title">Paper Trail</div>
           <div className="meta">
-            Day {world.day} · {world.biome} · wind {Math.round(world.air.windSpeed)} m/s
+            Day {world.day} · {world.palette.mood} {world.biome} · wind{' '}
+            {Math.round(world.air.windSpeed)} m/s
           </div>
           <div className="hint">Move to steer · click or space to launch</div>
         </div>

@@ -1,5 +1,5 @@
 import { Noise2D, fbm, ridged, billow, type FbmOptions } from './noise'
-import type { Rng } from './rng'
+import { randRange, type Rng } from './rng'
 import type { BiomeId } from './palette'
 
 /**
@@ -28,6 +28,10 @@ export interface Heightfield {
   /** Absolute altitude of the water plane. Below `hasWater` this is unused. */
   waterLevel: number
   hasWater: boolean
+  /** The day's structural modifier. Carried for the tuning panel and for debugging. */
+  landform: LandformId
+  /** Whether two noise characters were blended across the map. */
+  hybrid: boolean
 }
 
 /**
@@ -35,8 +39,59 @@ export interface Heightfield {
  * above the ~64 m Nyquist wavelength or it turns into single-vertex spikes rather
  * than terrain. At lacunarity ~2 that caps every biome at five octaves.
  */
+type NoiseKind = 'ridged' | 'fbm' | 'billow'
+
+/**
+ * A structural modifier drawn per day, on top of the biome.
+ *
+ * Biome shape alone gave every alpine day the same alpine: same relief, same
+ * frequency, same amount of water, differing only by which part of an infinite
+ * noise field it sampled. Six biomes on a strict rotation then meant a player who
+ * came back for a week saw six landscapes and started seeing them again. These are
+ * the second axis — they change what *kind* of place the day is rather than how its
+ * numbers are set, and they are the difference between "alpine again" and "the day
+ * with the fault line across it".
+ *
+ * Each is a handful of arithmetic inside the generation loop. None of them needs a
+ * second pass over the heightfield, which is why there are seven of them rather
+ * than one erosion simulation.
+ */
+export type LandformId =
+  /** No modifier. Deliberately in every biome's list — a plain day is a day too. */
+  | 'plain'
+  /** A branching network of carved channels, following the domain warp. */
+  | 'rivers'
+  /** The same carve, much deeper and much narrower. */
+  | 'canyons'
+  /** One large circular depression with a raised rim. */
+  | 'caldera'
+  /** A single fault line across the map; everything on one side steps up. */
+  | 'escarpment'
+  /** Long parallel ridges at one heading, over whatever is underneath. */
+  | 'dunes'
+  /** Stepped contours, the mesa treatment applied somewhere it does not belong. */
+  | 'terraces'
+  /** Isolated steep-sided rises off a noise threshold — tables on a mesa day, tors on a field day. */
+  | 'buttes'
+  /** One wide U-shaped trough across the map, as if something enormous slid through. */
+  | 'glacial'
+
+/**
+ * Which modifiers each biome may draw. Restricted by what reads as plausible —
+ * dunes on an alpine day look like a mistake — and weighted only by list length.
+ */
+const LANDFORMS: Record<BiomeId, readonly LandformId[]> = {
+  alpine: ['plain', 'rivers', 'caldera', 'escarpment', 'terraces', 'glacial'],
+  mesa: ['plain', 'canyons', 'canyons', 'dunes', 'escarpment', 'buttes'],
+  coastal: ['plain', 'rivers', 'escarpment', 'dunes'],
+  valley: ['plain', 'rivers', 'rivers', 'terraces', 'escarpment', 'glacial'],
+  volcanic: ['plain', 'canyons', 'caldera', 'caldera'],
+  field: ['plain', 'rivers', 'rivers', 'escarpment', 'terraces', 'buttes'],
+  archipelago: ['plain', 'rivers', 'terraces', 'escarpment'],
+}
+
 interface BiomeShape {
-  kind: 'ridged' | 'fbm' | 'billow'
+  kind: NoiseKind
   amplitude: number
   /** Cycles per metre for the first octave. */
   baseFreq: number
@@ -123,6 +178,26 @@ const SHAPES: Record<BiomeId, BiomeShape> = {
     islands: false,
     curve: 1.9,
   },
+  field: {
+    // Rolling hay country. A third of the relief of anything else in the game,
+    // which is the point: this is the biome with no mountains in it. Ridge lift
+    // barely exists on ground this gentle, so the day's lift comes almost
+    // entirely from thermals — generateAir notices the low relief and organizes
+    // them into streets. Long-wavelength billow so the hills are swells you fly
+    // along, not bumps you fly over.
+    kind: 'billow',
+    amplitude: 230,
+    baseFreq: 1 / 3100,
+    octaves: 5,
+    lacunarity: 2.0,
+    gain: 0.46,
+    warp: 320,
+    // Ponds and a stream threading the lowest ground.
+    waterFrac: 0.06,
+    terrace: 0,
+    islands: false,
+    curve: 1.0,
+  },
   archipelago: {
     kind: 'fbm',
     amplitude: 480,
@@ -139,10 +214,13 @@ const SHAPES: Record<BiomeId, BiomeShape> = {
 }
 
 export function generateHeightfield(biome: BiomeId, rng: Rng): Heightfield {
-  const shape = SHAPES[biome]
+  const shape = varyShape(SHAPES[biome], rng)
   const base = new Noise2D(rng)
   const warpA = new Noise2D(rng)
   const warpB = new Noise2D(rng)
+  const alt = new Noise2D(rng)
+  const blend = new Noise2D(rng)
+  const feature = new Noise2D(rng)
 
   const opts: FbmOptions = {
     octaves: shape.octaves,
@@ -151,6 +229,81 @@ export function generateHeightfield(biome: BiomeId, rng: Rng): Heightfield {
     gain: shape.gain,
   }
   const warpOpts: FbmOptions = { octaves: 3, frequency: shape.baseFreq * 0.7, lacunarity: 2, gain: 0.5 }
+
+  // --- the day's second character ------------------------------------------
+  // A single noise kind makes the whole 12 km map one texture: alpine is spines
+  // everywhere, valley is lumps everywhere, and after one flight you have seen all
+  // of it. Blending a second kind in under a slow mask means a map can be ridges at
+  // one end and rounded hills at the other, which gives a flight somewhere to be
+  // going. The mask is deliberately coarse — two or three regions across the map,
+  // not a checkerboard.
+  const others: NoiseKind[] = (['ridged', 'fbm', 'billow'] as NoiseKind[]).filter((k) => k !== shape.kind)
+  const altKind = others[Math.floor(rng() * others.length)]
+  const altOpts: FbmOptions = {
+    octaves: Math.max(3, shape.octaves - 1),
+    frequency: shape.baseFreq * randRange(rng, 0.8, 1.5),
+    lacunarity: shape.lacunarity,
+    gain: shape.gain,
+  }
+  const blendOpts: FbmOptions = { octaves: 2, frequency: 1 / randRange(rng, 3600, 6000), lacunarity: 2, gain: 0.5 }
+  const hybrid = rng() < 0.65
+
+  // --- the day's landform ---------------------------------------------------
+  const landform = LANDFORMS[biome][Math.floor(rng() * LANDFORMS[biome].length)]
+
+  // River channels stay shallow. They are drainage, not a route: cut deep enough and
+  // a glide can follow one downhill for kilometres without ever working for it.
+  const carveDepth = landform === 'canyons' ? randRange(rng, 0.22, 0.36) : randRange(rng, 0.09, 0.16)
+  // Where the carve starts biting, as a fraction of the ridge field. Higher is
+  // narrower, which is the whole difference between a river valley and a canyon.
+  const carveEdge = landform === 'canyons' ? 0.9 : 0.8
+  const carveOpts: FbmOptions = { octaves: 2, frequency: 1 / randRange(rng, 2400, 4400), lacunarity: 2, gain: 0.5 }
+
+  const calderaX = randRange(rng, -HALF_WORLD * 0.45, HALF_WORLD * 0.45)
+  const calderaZ = randRange(rng, -HALF_WORLD * 0.45, HALF_WORLD * 0.45)
+  // Radius is the number that matters, and not for looks. At 2.8 km the bowl spans
+  // 5.6 km of a 12 km map, which is a funnel the whole flight can ride down: a
+  // hands-off glide on such a day went 7.2 km against the 1.0-2.4 km the rest of
+  // the game sits at, and there is no launch site the scorer could have picked that
+  // would have avoided it. Kept small enough to be a feature on the map rather than
+  // the shape of the map.
+  const calderaR = randRange(rng, 800, 1500)
+  const calderaDepth = randRange(rng, 0.12, 0.22)
+  const calderaRim = randRange(rng, 0.06, 0.15)
+
+  const faultAngle = randRange(rng, 0, Math.PI * 2)
+  const faultX = Math.cos(faultAngle)
+  const faultZ = Math.sin(faultAngle)
+  const faultOffset = randRange(rng, -0.3, 0.3)
+  // Same reasoning as the caldera radius: a step is a large-scale height difference
+  // across the whole map, so it stays small enough not to become a ramp.
+  const faultStep = randRange(rng, 0.08, 0.16)
+  const faultOpts: FbmOptions = { octaves: 2, frequency: 1 / randRange(rng, 2200, 4000), lacunarity: 2, gain: 0.5 }
+
+  // Buttes stand on a noise threshold: the narrow smoothstep is the steep side,
+  // the noise's own plateau above the threshold is the flat top. Local rises like
+  // the caldera rim, never a map-scale ramp — the flight can use one, not ride it.
+  const butteEdge = randRange(rng, 0.3, 0.46)
+  const butteHeight = randRange(rng, 0.1, 0.17)
+  const butteOpts: FbmOptions = { octaves: 2, frequency: 1 / randRange(rng, 1300, 2100), lacunarity: 2, gain: 0.5 }
+
+  // The glacial trough reuses the fault's heading and crook. Constant depth along
+  // its whole length, so entering it is one drop rather than a downhill to follow —
+  // the same lesson the rivers and the caldera had to learn, applied in advance.
+  const troughWidth = randRange(rng, 0.1, 0.18)
+  const troughDepth = randRange(rng, 0.1, 0.16)
+
+  const duneAngle = randRange(rng, 0, Math.PI * 2)
+  const duneX = Math.cos(duneAngle)
+  const duneZ = Math.sin(duneAngle)
+  // 400-800 m between crests. Anything finer disappears into the 32 m cells.
+  const duneFreq = randRange(rng, 0.008, 0.016)
+  const duneAmp = randRange(rng, 0.025, 0.05)
+  const duneOpts: FbmOptions = { octaves: 2, frequency: 1 / 2600, lacunarity: 2, gain: 0.5 }
+
+  if (landform === 'terraces' && shape.terrace === 0) {
+    shape.terrace = Math.round(randRange(rng, 4, 9))
+  }
 
   const seg = TERRAIN_SEG
   const n = seg + 1
@@ -176,21 +329,59 @@ export function generateHeightfield(biome: BiomeId, rng: Rng): Heightfield {
       const px = wx + dx
       const pz = wz + dz
 
-      let h: number
-      switch (shape.kind) {
-        case 'ridged':
-          h = ridged(base, px, pz, opts)
-          break
-        case 'billow':
-          h = billow(base, px, pz, opts)
-          break
-        default:
-          h = fbm(base, px, pz, opts)
+      let h = sampleKind(shape.kind, base, px, pz, opts)
+      if (hybrid) {
+        const m = smoothstep(-0.22, 0.3, fbm(blend, wx, wz, blendOpts))
+        if (m > 0) h += (sampleKind(altKind, alt, px, pz, altOpts) - h) * m
       }
 
       // to 0..1
       let t = clamp01(h * 0.5 + 0.5)
       t = Math.pow(t, shape.curve)
+
+      switch (landform) {
+        case 'rivers':
+        case 'canyons': {
+          // 1 - |noise| ridges along the field's zero crossings, which is a
+          // branching network rather than a set of parallel gouges. Sampled at the
+          // warped coordinates so the channels meander with everything else.
+          const ridge = 1 - Math.abs(fbm(feature, px, pz, carveOpts))
+          t -= smoothstep(carveEdge, 1, ridge) * carveDepth
+          break
+        }
+        case 'caldera': {
+          const d = Math.hypot(x - calderaX, z - calderaZ) / calderaR
+          // Rim first, then the floor drops out from under it. The gaussian rim is
+          // what stops it reading as a dent and starts it reading as a crater.
+          const rim = Math.exp(-(((d - 1) * 2.4) ** 2)) * calderaRim
+          t += rim - (1 - smoothstep(0.72, 1, d)) * calderaDepth
+          break
+        }
+        case 'escarpment': {
+          // A straight fault, made crooked by a noise term, with a step across it.
+          // Centred on zero so the map's overall height is unchanged and the launch
+          // scorer is not handed a free 200 m on one side.
+          const s = (x * faultX + z * faultZ) / HALF_WORLD + fbm(feature, wx, wz, faultOpts) * 0.45 + faultOffset
+          t += smoothstep(-0.05, 0.05, s) * faultStep - faultStep * 0.5
+          break
+        }
+        case 'dunes': {
+          const u = x * duneX + z * duneZ
+          t += Math.sin(u * duneFreq + fbm(feature, wx, wz, duneOpts) * 3.2) * duneAmp
+          break
+        }
+        case 'buttes': {
+          const f = fbm(feature, px, pz, butteOpts)
+          t += smoothstep(butteEdge, butteEdge + 0.09, f) * butteHeight
+          break
+        }
+        case 'glacial': {
+          const s = (x * faultX + z * faultZ) / HALF_WORLD + fbm(feature, wx, wz, faultOpts) * 0.3 + faultOffset
+          t -= Math.exp(-((s / troughWidth) ** 2)) * troughDepth
+          break
+        }
+      }
+      t = clamp01(t)
 
       if (shape.islands) {
         // A gentle radial bias, not a hard cone: at this map size a strong falloff
@@ -222,7 +413,59 @@ export function generateHeightfield(biome: BiomeId, rng: Rng): Heightfield {
   const hasWater = shape.waterFrac > 0
   const waterLevel = hasWater ? min + (max - min) * shape.waterFrac : min - 1
 
-  return { size: WORLD_SIZE, seg, cell, data, min, max, waterLevel, hasWater }
+  return { size: WORLD_SIZE, seg, cell, data, min, max, waterLevel, hasWater, landform, hybrid }
+}
+
+function sampleKind(kind: NoiseKind, n: Noise2D, x: number, z: number, o: FbmOptions): number {
+  switch (kind) {
+    case 'ridged':
+      return ridged(n, x, z, o)
+    case 'billow':
+      return billow(n, x, z, o)
+    default:
+      return fbm(n, x, z, o)
+  }
+}
+
+/**
+ * The day's own take on the biome.
+ *
+ * Everything in a BiomeShape was a constant, so the only thing separating two
+ * alpine days was which patch of noise they sampled — same relief, same scale, same
+ * coastline fraction. These ranges are wide enough to be felt (a 22% swing in
+ * amplitude is 180 m of relief on an alpine map) and narrow enough that the biome
+ * still reads as itself.
+ *
+ * `baseFreq` is the one with a hard ceiling. Octaves multiply it by lacunarity four
+ * times over, and the finest octave has to stay above the ~64 m Nyquist wavelength
+ * of a 32 m cell or the terrain turns into single-vertex spikes — so 1.3 is as far
+ * up as this may go without also dropping an octave.
+ */
+function varyShape(shape: BiomeShape, rng: Rng): BiomeShape {
+  return {
+    ...shape,
+    amplitude: shape.amplitude * randRange(rng, 0.85, 1.15),
+    baseFreq: shape.baseFreq * randRange(rng, 0.78, 1.24),
+    lacunarity: shape.lacunarity * randRange(rng, 0.95, 1.06),
+    gain: clamp(shape.gain * randRange(rng, 0.93, 1.08), 0.4, 0.6),
+    // Warp is the free one. It moves terrain sideways, never up or down, so no
+    // amount of it can turn a map into a ramp — and it is most of what makes two
+    // days of the same biome read as different country.
+    warp: shape.warp * randRange(rng, 0.55, 1.7),
+    // Capped at 0.5: past that the archipelago and coastal maps are more sea than
+    // land, and the launch scorer starts having to fall back to whatever peak it
+    // can find rather than choosing one.
+    waterFrac: shape.waterFrac > 0 ? clamp(shape.waterFrac * randRange(rng, 0.8, 1.18), 0.02, 0.5) : 0,
+    // Curve is an exponent on the normalised field: it does not scale the terrain,
+    // it flattens the lowlands into a basin and stands the peaks out of it, which is
+    // the difference between rolling country and peaks-above-a-plain.
+    //
+    // It was the obvious suspect for the long-glide days and it is not the culprit.
+    // Holding it fixed across 60 days moved the hands-off mean from 2391 m to
+    // 2291 m and left the tail where it was — inside the sampling noise of a
+    // distribution this skewed. The tail is in the base terrain, not in this.
+    curve: shape.curve * randRange(rng, 0.9, 1.12),
+  }
 }
 
 function borderMask(x: number, z: number): number {

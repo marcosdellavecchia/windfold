@@ -72,11 +72,19 @@ export function Water({ world }: { world: World }) {
 
         // Cheap crossed-wave surface. Three scales of ripple is enough to read as
         // texture from 200 m up, and it costs no texture fetch.
+        //
+        // The wavelengths matter more than they look. The first version used 300 m
+        // features sliding at 43 m/s, because the phase rate was picked to feel
+        // right without checking it against the spatial frequency it divides into.
+        // On a lake 300 m across that is the entire surface pulsing at once, which
+        // reads as a rendering fault rather than as water. These are 20-80 m waves
+        // moving at 3-7 m/s, which is roughly what wind waves actually do, and at
+        // that scale the motion is texture instead of the lake itself moving.
         float waves(vec2 p, float t) {
-          float w = sin(p.x * 0.021 + t * 0.9) * sin(p.y * 0.017 - t * 0.7);
-          w += 0.6 * sin(p.x * 0.048 - t * 1.3) * sin(p.y * 0.055 + t * 1.1);
-          w += 0.3 * sin((p.x + p.y) * 0.11 + t * 2.1);
-          return w / 1.9;
+          float w = sin(p.x * 0.08 + t * 0.55) * sin(p.y * 0.071 - t * 0.42);
+          w += 0.55 * sin(p.x * 0.17 - t * 0.7) * sin(p.y * 0.19 + t * 0.6);
+          w += 0.3 * sin((p.x + p.y) * 0.33 + t * 0.9);
+          return w / 1.85;
         }
 
         void main() {
@@ -90,8 +98,9 @@ export function Water({ world }: { world: World }) {
           // Flatten the ripple with distance. Per-pixel waves seen almost edge-on
           // alias into corduroy stripes across the whole sea; fading the slope out
           // past a few hundred metres removes them and costs nothing visually,
-          // because that detail was never legible at range anyway.
-          float ripple = 5.5 * (1.0 - smoothstep(500.0, 2600.0, vDist));
+          // because that detail was never legible at range anyway. Shorter waves
+          // alias sooner, so this fades sooner than it used to.
+          float ripple = 4.0 * (1.0 - smoothstep(260.0, 1400.0, vDist));
           vec3 n = normalize(vec3(-wx * ripple, 1.0, -wz * ripple));
 
           // Looking straight down you see into the water; at a grazing angle the
@@ -99,7 +108,14 @@ export function Water({ world }: { world: World }) {
           // water seen from an aircraft.
           float fres = pow(1.0 - clamp(dot(n, viewDir), 0.0, 1.0), 4.0);
 
-          vec3 body = mix(uDeep, uShallow, 0.35 + w0 * 0.15);
+          // Body colour varies with *position only*, never with the wave phase.
+          // Modulating it by w0 put a 300 m brightness field on the surface that
+          // slid across it at speed, and that — not the ripple, not the glitter —
+          // was the thing that made a lake look like it was moving under the map.
+          // Water this size does not change colour as a wave passes; it changes
+          // colour where it is deeper or shallower, and that does not move at all.
+          float mottle = sin(vWorld.x * 0.0009) * sin(vWorld.z * 0.0011);
+          vec3 body = mix(uDeep, uShallow, 0.36 + mottle * 0.16);
           // Capped well below 1: a physically full mirror at grazing angles turns every
           // lake and sea into the same colour as the sky, and the landscape goes
           // monochrome. Water keeps some of its own body colour at every angle.

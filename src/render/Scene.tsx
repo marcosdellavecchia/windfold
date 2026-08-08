@@ -13,6 +13,7 @@ import { Water } from './Water'
 import { Clouds } from './Clouds'
 import { Trees } from './Trees'
 import { Birds } from './Birds'
+import { Motes } from './Motes'
 import { FOG_DENSITY } from './atmosphere'
 import { Sky } from './Sky'
 import { Thermals } from './Thermals'
@@ -48,6 +49,7 @@ export function Scene({ world }: { world: World }) {
       <Thermals world={world} />
       <Clouds world={world} />
       <Birds world={world} />
+      <Motes world={world} />
       <primitive object={trail.object} />
       <PaperPlane ref={planeRef} world={world} />
 

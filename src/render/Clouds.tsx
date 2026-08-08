@@ -1,4 +1,5 @@
-import { useMemo } from 'react'
+import { useMemo, useRef } from 'react'
+import { useFrame } from '@react-three/fiber'
 import {
   Color,
   InstancedBufferAttribute,
@@ -38,6 +39,8 @@ export function Clouds({ world }: { world: World }) {
     const scale = new Float32Array(count)
     // 0 at the puff's base, 1 at its top — drives the lit/shaded gradient.
     const lift = new Float32Array(count)
+    // Decorrelates each puff's drift, so a cumulus churns instead of sliding.
+    const phase = new Float32Array(count)
 
     for (let t = 0; t < thermals.length; t++) {
       const th = thermals[t]
@@ -59,6 +62,7 @@ export function Clouds({ world }: { world: World }) {
         offset[i * 3 + 2] = th.z + Math.sin(a) * r
         scale[i] = (core ? spread * 1.15 : spread * (0.5 + rng() * 0.6)) * bigness
         lift[i] = core ? 0.45 : up / (spread * 0.55)
+        phase[i] = rng() * Math.PI * 2
       }
     }
 
@@ -70,6 +74,7 @@ export function Clouds({ world }: { world: World }) {
     geo.setAttribute('aOffset', new InstancedBufferAttribute(offset, 3))
     geo.setAttribute('aScale', new InstancedBufferAttribute(scale, 1))
     geo.setAttribute('aLift', new InstancedBufferAttribute(lift, 1))
+    geo.setAttribute('aPhase', new InstancedBufferAttribute(phase, 1))
     geo.instanceCount = count
     // Billboards have no meaningful bounds; the sky is always potentially on screen.
     geo.boundingSphere = null
@@ -83,21 +88,35 @@ export function Clouds({ world }: { world: World }) {
         uShade: { value: new Color(rgbToHex(pal.skyHorizon)).lerp(new Color(0xffffff), 0.55) },
         uFog: { value: new Color(rgbToHex(pal.fog)) },
         uSunDir: { value: world.sunDir.clone() as Vector3 },
+        uTime: { value: 0 },
       },
       vertexShader: /* glsl */ `
         attribute vec3 aOffset;
         attribute float aScale;
         attribute float aLift;
+        attribute float aPhase;
         varying vec2 vUv;
         varying float vLift;
         varying float vFog;
         varying float vSun;
         uniform vec3 uSunDir;
+        uniform float uTime;
 
         void main() {
+          // Puffs wander a few metres and breathe a few percent, out of phase with
+          // each other. A cumulus is a convecting thing and a frozen one looks like
+          // a decal; the amplitudes are small enough that nobody sees it move and
+          // large enough that the sky is never twice the same.
+          vec3 wob = vec3(
+            sin(uTime * 0.11 + aPhase) * 7.0,
+            sin(uTime * 0.07 + aPhase * 1.7) * 3.5,
+            cos(uTime * 0.09 + aPhase * 0.8) * 7.0
+          );
+          float breathe = aScale * (1.0 + 0.06 * sin(uTime * 0.13 + aPhase));
+
           // View-space billboard: place the centre, then offset in screen axes.
-          vec4 centre = viewMatrix * vec4(aOffset, 1.0);
-          centre.xy += position.xy * aScale;
+          vec4 centre = viewMatrix * vec4(aOffset + wob, 1.0);
+          centre.xy += position.xy * breathe;
           gl_Position = projectionMatrix * centre;
 
           vUv = uv;
@@ -146,6 +165,12 @@ export function Clouds({ world }: { world: World }) {
     m.renderOrder = 2
     return m
   }, [world])
+
+  const clock = useRef(0)
+  useFrame((_, dt) => {
+    clock.current += Math.min(dt, 0.1)
+    ;(mesh.material as ShaderMaterial).uniforms.uTime.value = clock.current
+  })
 
   return <primitive object={mesh} />
 }

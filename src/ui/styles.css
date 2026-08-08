@@ -29,6 +29,41 @@ canvas {
   display: block;
 }
 
+/* -------------------------------------------------------------- dream ---- */
+
+/*
+ * A vignette and a cross-frame colour wash, in CSS over the canvas.
+ *
+ * This is the one piece of grading in the game and it deliberately is not a render
+ * pass: a post-processing chain would mean an EffectComposer, two render targets
+ * and a second full-screen draw on a phone that has to hold 60fps, to do something
+ * two gradients already do. The vignette pulls the eye to the middle of the frame
+ * where the aircraft is, and the wash keeps the corners from being flat colour —
+ * which is exactly where a wide sky gradient goes dead.
+ *
+ * soft-light on the tint layer, so it bends whatever the day's palette happens to
+ * be rather than laying the same orange over all six biomes.
+ */
+.dream {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(115% 88% at 50% 45%, transparent 40%, rgba(6, 8, 22, 0.34) 100%);
+}
+
+.dream::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    205deg,
+    rgba(255, 206, 160, 0.18),
+    transparent 46%,
+    rgba(130, 170, 255, 0.18)
+  );
+  mix-blend-mode: soft-light;
+}
+
 /* ---------------------------------------------------------------- hud ---- */
 
 .hud {
@@ -359,6 +394,25 @@ canvas {
 .dayNav span {
   min-width: 34px;
   text-align: center;
+}
+
+.worldInfo {
+  grid-column: 2 / -1;
+  color: rgba(255, 255, 255, 0.85);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.biomeRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.biomeRow button.active {
+  border-color: rgba(126, 247, 196, 0.7);
+  color: #7ef7c4;
 }
 
 @media (max-width: 640px) {

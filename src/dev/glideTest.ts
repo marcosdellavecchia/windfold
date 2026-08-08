@@ -13,6 +13,18 @@ import { sampleHeight, surfaceHeight } from '../sim/terrain'
 
 const DT = 1 / 60
 
+/**
+ * How many days the day-sweeps cover.
+ *
+ * One cycle of BIOME_ORDER used to be a complete sample, because a biome fully
+ * determined its terrain and every alpine day was the same alpine. Now the day also
+ * draws its own amplitude, frequency, water fraction and landform, so one alpine
+ * day says nothing about the next one — and the failure this is here to catch is a
+ * *particular* day being a free ride, not a biome being one. Three cycles is enough
+ * to see the outliers without making the run slow enough to skip.
+ */
+const SWEEP_DAYS = BIOME_ORDER.length * 3
+
 function fly(day: number, pilot: (f: Flight, t: number) => { x: number; y: number }, maxT = 300) {
   const world = buildWorld(day)
   const f = new Flight(world.heightfield, world.air, world.launch)
@@ -131,7 +143,7 @@ for (let i = 0; same && i < a.heightfield.data.length; i++) {
 console.log(`day 7 rebuilt byte-identical: ${same}`)
 
 console.log('\n--- launch sites: is altitude actually scarce? -----------------')
-for (let day = 0; day < BIOME_ORDER.length; day++) {
+for (let day = 0; day < SWEEP_DAYS; day++) {
   const w = buildWorld(day)
   const dx = Math.cos(w.air.windDir)
   const dz = Math.sin(w.air.windDir)
@@ -150,7 +162,8 @@ for (let day = 0; day < BIOME_ORDER.length; day++) {
   const range = first ? Math.hypot(first.t.x - w.launch.pos.x, first.t.z - w.launch.pos.z) : NaN
 
   console.log(
-    `day ${day} ${w.biome.padEnd(12)} ` +
+    `day ${String(day).padStart(2)} ${w.biome.padEnd(12)} ` +
+      `${w.heightfield.landform.padEnd(11)} ` +
       `agl ${agl.toFixed(0).padStart(4)}m  ` +
       `above route ${(w.launch.pos.y - route).toFixed(0).padStart(4)}m  ` +
       `first column ${range.toFixed(0).padStart(4)}m ahead ` +
@@ -161,12 +174,13 @@ for (let day = 0; day < BIOME_ORDER.length; day++) {
 
 console.log('\n--- floor vs ceiling: hands-off, then chaining thermals --------')
 console.log('  (the chase pilot is crude, so its number is a lower bound on skilled play)')
-for (let day = 0; day < BIOME_ORDER.length; day++) {
+for (let day = 0; day < SWEEP_DAYS; day++) {
   const idle = fly(day, level)
   const chased = fly(day, makeChasePilot(buildWorld(day)))
   const ratio = chased.f.distance / Math.max(idle.f.distance, 1)
   console.log(
-    `day ${day} ${idle.world.biome.padEnd(12)} ` +
+    `day ${String(day).padStart(2)} ${idle.world.biome.padEnd(12)} ` +
+      `${idle.world.heightfield.landform.padEnd(11)} ` +
       `hands-off ${idle.f.distance.toFixed(0).padStart(5)}m/${idle.t.toFixed(0).padStart(3)}s   ` +
       `chained ${chased.f.distance.toFixed(0).padStart(5)}m/${chased.t.toFixed(0).padStart(3)}s   ` +
       `climbed +${Math.max(0, chased.peak - chased.world.launch.pos.y).toFixed(0)}m   ` +

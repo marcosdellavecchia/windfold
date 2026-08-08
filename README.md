@@ -2,10 +2,10 @@
 
 > A daily paper-plane gliding game in the browser. One landscape a day, as many flights as you like, best distance is your record.
 
-**Status:** build steps 1 and 2 done. Flight model, a 12 km procedural world with six
+**Status:** build steps 1 and 2 done. Flight model, a 12 km procedural world with seven
 biomes, forests, lakes and sea, cumulus, birds, seeded daily worlds, air (wind /
-thermals / ridge lift), chase camera, live wake trail, generated ambient music, and the
-crash → retry loop all work. Everything from step 3 onward is unbuilt: no backend, no ghost trails from other
+thermals / ridge lift / thermal streets), chase camera, live wake trail, generated
+ambient music, and the crash → retry loop all work. Everything from step 3 onward is unbuilt: no backend, no ghost trails from other
 players, no share card, no streak, no persistence of any kind.
 See [Built so far](#built-so-far).
 
@@ -25,13 +25,22 @@ npm run build
 
 Mouse (or drag on touch) steers pitch and roll. Click or space launches, and does an
 instant restart once you are down. `T` opens a live tuning panel for the flight model
-and lets you step through days; `?day=N` loads a specific day directly.
+and lets you step through days, jump to a random day, or jump to a random day of a
+chosen biome; `R` rerolls a random world from anywhere. `?day=N` loads a specific day
+directly, and the URL tracks day changes so a world found while testing can be linked.
 
 `npm run sim:check` runs `src/dev/glideTest.ts`: launch-site pressure, hands-off
 distance versus a thermal-chaining autopilot, trim stability, stall entry and recovery,
 the dive-and-flare energy trade, turn rate, circling sink, thermal climb rate, and a
 determinism check. It is the fast way to tell whether a tuning change broke something,
 since most of these are invisible in a single hand-flown flight.
+
+The day sweeps cover three cycles of the biome rotation, not one. A single day per
+biome was a complete sample back when a biome determined its terrain; now the day
+draws its own shape and landform, so one alpine day says nothing about the next, and
+the failure worth catching is a *particular* day being a free ride. Note that editing
+terrain generation reshuffles the seeded stream, so every day's map changes and
+comparing run to run day by day is meaningless — compare the distribution.
 
 The autopilot is crude on purpose — it exists to bound a day's ceiling from below, not
 to play well. When it beats a hands-off glide by a wide margin the day has depth; when
@@ -112,7 +121,8 @@ for one glider and one heightfield raycast.
 - `dayNumber = days since <launch date>, in America/Los_Angeles`. Seeds a deterministic PRNG (mulberry32 or similar). Same input, same world, on every device.
 - The seed drives terrain heightmap, thermal placement, wind vector, colour palette, time of day, and cloud layout.
 - **Everything is procedural — ship no 3D model files.** This is what keeps first load under 3 seconds, which rule 7 depends on.
-- Rotate biomes by day so consecutive days feel different: alpine ridges, desert mesas, coastal cliffs, forested valleys, volcanic badlands, archipelago.
+- Rotate biomes by day so consecutive days feel different: alpine ridges, desert mesas, coastal cliffs, forested valleys, volcanic badlands, hay fields, archipelago.
+- **The biome is not the whole day.** A strict rotation means a returning player sees the same seven landscapes in a week, so the day also draws its own relief, noise frequency, domain warp and water fraction, a second noise character blended across the map, and one structural landform — rivers, canyons, a caldera, a fault line, dunes, terraces, buttes, a glacial trough, or nothing. Two alpine days should be two different mountain ranges, not two crops of one.
 - Wind and thermals are **fixed for the day, not re-rolled per attempt.** Retries must be a test of skill against a stable world, otherwise the best score is just whoever got the luckiest roll.
 
 Determinism is testable and should be tested: two browsers, same day, byte-identical
@@ -125,7 +135,8 @@ terrain hash.
 Beautiful landscapes are as much the reason to return as the score is.
 
 - Stylised, not realistic. Large silhouettes, strong atmospheric perspective, heavy distance fog tinted to the day's palette, a low sun.
-- One striking seeded colour palette per day. Vertex-coloured or gradient-ramped terrain rather than textures.
+- **Slightly wrong on purpose.** A refraction-flattened sun, a moon in daylight, dust hanging in front of the camera, colour that does not quite belong to any hour. The player should half-notice these rather than see them. It is the difference between a landscape and a remembered one, and it is cheap: every one of them is a few lines in a shader that was already running.
+- One striking seeded colour palette per day, plus one of six named grades that splits sky and ground in opposite hue directions. Vertex-coloured or gradient-ramped terrain rather than textures.
 - The plane sits small on screen and always in frame. Camera follows loosely behind with slight lag and roll, so the horizon tilts.
 - No UI chrome during flight beyond distance and altitude, thin and minimal.
 - Target 60fps on a mid-tier Android phone. Fog is the draw-distance budget.
@@ -243,20 +254,21 @@ No external fonts, no CSS frameworks, no component libraries.
 src/sim/          no React, no scene graph — steppable headlessly
   rng.ts          mulberry32 + FNV-1a seed hashing
   noise.ts        seeded Perlin, fbm / ridged / billow
-  terrain.ts      heightfield generation, bilinear sampling, gradients
-  palette.ts      six biome palettes in HSL, seeded hue rotation
+  terrain.ts      heightfield generation, per-day shape and landform, sampling
+  palette.ts      seven biome palettes in HSL, seeded hue rotation, daily grade
   air.ts          wind, thermal columns, ridge lift
   flight.ts       the flight model: fixed-timestep aero integrator
   tuning.ts       every tunable number, mutable for the live panel
-  world.ts        day number -> seed -> biome, terrain, air, launch site, sun
-  flora.ts        where forest grows, and the mask the terrain and trees share
+  world.ts        day number -> seed -> biome, terrain, air, launch site, sun, moon
+  flora.ts        where forest grows, what fills the ground it does not cover
 src/render/       R3F components; all transforms driven from one useFrame
-  Terrain.tsx     vertex-coloured heightfield, forest painted into the colour
-  Trees.tsx       two instanced species, streamed around the camera
+  Terrain.tsx     vertex-coloured heightfield: forest, strata, meadow, snow, aspect
+  Trees.tsx       two tree species plus the biome's understory, streamed
   Clouds.tsx      cumulus billboards, one per thermal
   Water.tsx       fresnel + glitter + ripple, no render target
-  Birds.tsx       flocks circling the nearest columns
-  Sky.tsx         gradient dome with a sun disc
+  Birds.tsx       flocks circling the nearest columns, and one skein passing through
+  Motes.tsx       near-field dust, wrapped around the camera
+  Sky.tsx         gradient dome: sun, moon, cirrus, counter-glow, rays
   atmosphere.ts   the single fog constant every shader has to agree on
 src/audio/        Web Audio synthesis; no React inside music.ts
   music.ts        the day's generated score
@@ -302,6 +314,74 @@ Ridge lift needed no changes to become the risk/reward it was always meant to be
 already decays as `exp(−agl / 220)`, so the strongest lift is right against the terrain.
 Nobody flew low before because nobody had to.
 
+**Terrain diversity, and what it cost.** Every number in a biome's shape used to be a
+constant, so the only thing separating two alpine days was which patch of an infinite
+noise field they sampled — same relief, same scale, same coastline. Now each day
+varies its own amplitude, frequency, lacunarity, gain, warp and water fraction;
+blends in a second noise character under a slow mask, so a map can be spines at one
+end and rounded hills at the other; and draws one landform from a per-biome list.
+
+The landforms are cheap on purpose — each is a few lines of arithmetic inside the
+generation loop, which is why there are seven rather than one erosion pass. `rivers`
+and `canyons` carve a `1 - |noise|` ridge network at the warped coordinates, so the
+channels branch and meander instead of running in parallel. `caldera` is a gaussian
+rim with the floor dropped out under it. `escarpment` is a noise-crooked fault with a
+step across it, centred on zero so the map's mean height is unchanged. `dunes` is a
+directional ripple. `terraces` is the mesa treatment somewhere it does not belong.
+
+Two of these had to be reined in, and the reason is worth keeping. **Anything that
+changes height at map scale is a ramp the flight can ride, and nothing downstream can
+correct for it** — the launch scorer can only pick the least bad site on a map whose
+shape is already the problem. The first caldera radius went to 2.8 km, which spans
+5.6 km of a 12 km map, and a hands-off glide on such a day went 7.2 km against the
+1.0–2.4 km the game is tuned around. River channels got the same treatment for the
+same reason: cut deep and a glide follows one downhill for kilometres for free.
+
+The suspect that turned out to be innocent was `curve`, the exponent that flattens
+lowlands and stands peaks out of them. Holding it fixed across 60 days moved the
+hands-off mean from 2391 m to 2291 m and left the tail where it was, so it kept a
+full range. Measured over 60 days, hands-off distance now runs mean 2271 m, p90
+3082 m, max 4627 m against a pre-change baseline of 2153 / 3079 / 4330 — the same
+distribution within the sampling noise of something this skewed. Grouped by landform
+over 120 days the means sit between 2035 m and 2448 m, and both of the worst days in
+that sample were `plain`, which is no landform at all. The long tail is in the base
+terrain and always was; one biome-per-day was simply too small a sample to show it,
+which is why `glideTest` now sweeps three cycles instead of one.
+
+**The field biome, and what flat country taught the air.** The seventh biome is hay
+country: rolling billow swells at a third of anyone else's relief, hedgerow copses,
+poppies in the fallow strips, and hay bales at twice life size, because a true 1.5 m
+drum vanishes from 300 m up. It exists because every other biome is some kind of
+mountainous — the map's variety axis ran from "peaks" to "peaks with water" — and
+because a biome with no ridge lift at all forces the air to carry the day.
+
+It does that with thermal streets. Below ~520 m of measured relief the columns start
+snapping to a lattice of rows, and by field-day relief the organization is total: the
+count rises half again, the cores strengthen 20%, and since every cloud marks a
+thermal, the sky becomes rows of cumulus and the day becomes "pick a street and run
+it". Streets key off measured relief rather than biome, so a flat plain-landform day
+in any biome gets the same rescue — the two worst days in the 120-day sample were
+both `plain`, and this is aimed at exactly that hole.
+
+The first build ran the streets dead downwind, which is where real ones run, and it
+was a free ride: launch heading is also downwind, so a hands-off glide fell out of
+one thermal into the next for 6.1 km — the game's whole tuning target is 1.0–2.4 km.
+The streets now sit 20–35° off the wind. A hands-off flight drifts out of its street
+inside a kilometre; a player who banks to track the line keeps it. Same sky, but the
+street is a skill now instead of a ramp. This is the ridge-lift lesson in a new
+place: any lift the flight path crosses by default is free altitude, and the fix is
+always to make holding it an action.
+
+Two more landforms rode along. `buttes` stands steep-sided tables off a noise
+threshold — mesa country by right, tors on a field day. `glacial` is one wide
+U-trough across the map, reusing the escarpment's crooked fault line; constant depth
+along its length, so entering it is one drop rather than a downhill to follow, which
+is the caldera's lesson applied in advance. And shores got a material: a `sand` band
+above the waterline, width wandering with the same patch noise as everything else,
+suppressed on steep faces so cliffs still meet the sea bare. It is not always sand —
+grey shingle on alpine lakes, alkali crust round a playa, river silt in the valley,
+and black sand under the volcano, the one shore darker than its water.
+
 **The landscape.** Terrain is one 385² vertex-coloured mesh spanning 12 km at 32 m
 cells — the same draw cost as the original 6 km map for four times the area. Above it:
 forests, cumulus, water, and birds, all procedural, still no art files.
@@ -316,6 +396,18 @@ trees always stand on ground that already looks like forest. Trees stream in sca
 cells keyed by position, so a rebuild is stable and only the ones out at the fog limit
 get recycled — and they shrink to nothing at the boundary, so recycling is invisible.
 
+**Water does not move, and that is the point.** The wave function drove the *body
+colour* as well as the surface normal, which put a 300 m brightness field on every
+lake sliding across it at 43 m/s — the phase rates had been picked to feel right
+without dividing them into the spatial frequencies they belonged to. At a fixed point
+on a lake the deep/shallow mix swung by 0.118 on a three-second cycle, and on a lake
+300 m across that is the whole surface pulsing at once, which reads as a rendering
+fault rather than as water. Body colour is now a function of position only — swing
+0.000, forever — and the waves that remain are 20–80 m features moving at 3–7 m/s,
+where they belong: perturbing the normal for the fresnel and the sun glitter. Real
+water seen from an aircraft does not change colour as a wave passes. It changes colour
+where it is deeper, and that does not move at all.
+
 Cumulus is the piece of scenery that is also a mechanic. Dust columns only carry about
 2 km, which is one glide; clouds carry to the fog limit, so the sky is a map of where
 the lift is and "head for the next cloud" is a rule players teach themselves.
@@ -323,6 +415,49 @@ the lift is and "head for the next cloud" is a rule players teach themselves.
 Three shaders reproduce the scene's fog by hand, so `FOG_DENSITY` lives in exactly one
 place (`render/atmosphere.ts`). Any disagreement shows up as a hard line along the
 horizon.
+
+**The dream pass.** The art direction asks for stylised, not realistic, and the way
+that is cashed out here is a set of details that are each slightly wrong on purpose.
+A low sun is flattened by refraction into an oval — further than the atmosphere
+actually manages — cut by a mirage notch, and shimmering a few percent on a slow
+cycle. Crepuscular rays fan out of it on odd harmonics so the spokes are never even.
+A moon hangs in the daylight, phase and position seeded, deliberately placed away
+from the sun. Cirrus is drawn out along the day's wind on a projected sheet, so the
+streaks converge toward the horizon. Opposite the sun sits the counter-glow, which is
+the one thing in the list that is real. Near the camera, a few hundred motes wrap
+around the aircraft on a torus: the whole rest of the world is at least a hundred
+metres away, so without them there is no parallax at all and 21 m/s reads as a
+panning painting.
+
+The grade is the other half of it. Six biomes on a strict rotation means the same
+biome returns every six days, and a hue wobble was not enough to make those two days
+feel like different places, so each day also draws one of six named grades —
+*daybreak*, *gloaming*, *hazy*, *reverie*, *deep*, *clear* — which rotates the sky and
+the ground in **opposite** directions. Complementary sky and ground is most of why
+dawn photographs look the way they do, and it is the difference between a scene that
+is tinted and a scene that has a light in it. The name shows on the start screen, so
+the day gets called something.
+
+Two things that look like grading but are not: the terrain's aspect tint is a
+multiply by a mean-1 chroma, not a blend toward the light's colour — a light is
+nearly white by construction, and lerping toward it turned every sunlit slope grey —
+and the vignette is two CSS gradients over the canvas rather than a post chain,
+because an EffectComposer plus two render targets is a lot to spend on a phone that
+has to hold 60fps to do what a `radial-gradient` already does.
+
+**Ground cover.** Trees only stand where the forest mask is high, which by design
+leaves every scree slope, playa, cliff top and beach empty — most of the ground on
+four of the six biomes. Each biome now has an understory placed by the rules trees
+are placed *against*: boulders want the steep ground the spruce cannot hold, palms
+want the shoreline the forest is explicitly held back from. It rides the same scatter
+cells as the trees, so it costs one more instanced draw call and nothing else.
+
+Above that, the terrain mesh paints three more fields into its vertex colours, all
+free because they run once at world build: mineral strata banded on *absolute*
+altitude, so a cliff reads as cut through something layered while the face itself is
+not level; meadow patches on the open gentle ground between the woods; and a snowline
+that wanders on the same noise as everything else instead of drawing a ring around
+the peak.
 
 **Music.** Synthesised in the browser, not streamed — same reasoning as the terrain.
 Rule 5 forbids third-party requests and the load budget is three seconds; a few minutes
@@ -346,15 +481,21 @@ is −29 dBFS RMS / −14 dBFS peak: present, but under conversation level.
 
 - **The score metric is now the binding constraint, not the tuning.** Distance is
   straight-line displacement from the launch, so it is hard-capped by the map radius
-  (~5.5 km) while a hands-off flight already reaches 1.0–2.4 km. That leaves at most
+  (~5.5 km) while a hands-off flight already reaches 1.0–2.4 km on a typical day and,
+  measured over 60 days rather than six, 4.6 km on the worst one. That leaves at most
   ~4× of headroom for skill to show up in the number, even though using the air already
   triples or quadruples *time aloft*. Worth resolving before the share card fixes the
   format: keep displacement and push the floor down, score path distance flown, or score
   time aloft.
-- **60 fps on a mid-tier Android is still unverified.** Desktop sits at 120 fps with a
-  10 ms worst frame, so there is headroom, but nothing here has been measured on a
-  phone. Terrain has no LOD, and the tree rescatter is a burst of a few thousand
-  terrain samples every ~200 m of travel — the first thing to amortise if it hitches.
+- **60 fps on a mid-tier Android is still unverified**, and the dream pass has not
+  helped: the sky is now a four-octave fbm over a full-screen dome, and the
+  understory added a third instanced species to the rescatter burst. Desktop had a
+  10 ms worst frame before it, so there is headroom, but nothing here has been
+  measured on a phone. Terrain has no LOD, and the rescatter is a burst of a few
+  thousand terrain samples every ~200 m of travel — the first thing to amortise if it
+  hitches. The cirrus octave count is the cheapest thing to give back.
+- **The understory has no collision either.** Same as the trees: flying through a
+  boulder is free.
 - The bundle is 302 kB gzipped, nearly all Three.js.
 - Trees have no collision. Clipping a treetop is free, which is forgiving but wrong.
 - Terracing on the mesa biome is subtler than intended at 32 m cells.
