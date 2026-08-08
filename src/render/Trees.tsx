@@ -417,18 +417,19 @@ function detailColours(kind: DetailKind, pal: Palette): Rgb[] {
   }
 }
 
-const translated = (g: BufferGeometry, x: number, y: number, z: number) => g.translate(x, y, z)
-const rotatedX = (g: BufferGeometry, a: number) => g.rotateX(a)
-const rotatedZ = (g: BufferGeometry, a: number) => g.rotateZ(a)
-const rotatedY = (g: BufferGeometry, a: number) => g.rotateY(a)
-const scaled = (g: BufferGeometry, x: number, y: number, z: number) => g.scale(x, y, z)
+export const translated = (g: BufferGeometry, x: number, y: number, z: number) => g.translate(x, y, z)
+export const rotatedX = (g: BufferGeometry, a: number) => g.rotateX(a)
+export const rotatedZ = (g: BufferGeometry, a: number) => g.rotateZ(a)
+export const rotatedY = (g: BufferGeometry, a: number) => g.rotateY(a)
+export const scaled = (g: BufferGeometry, x: number, y: number, z: number) => g.scale(x, y, z)
 
 /**
  * Minimal geometry merge. Written here rather than pulled from
  * three/examples/jsm/utils/BufferGeometryUtils so the bundle stays one import
  * lighter — all it has to handle is a handful of primitives with a flat tint.
+ * Exported for the herds, which build their animals on the same contract.
  */
-function merge(parts: Array<{ geo: BufferGeometry; tint: number }>): BufferGeometry {
+export function merge(parts: Array<{ geo: BufferGeometry; tint: number }>): BufferGeometry {
   const flat = parts.map((p) => ({ geo: p.geo.toNonIndexed(), tint: p.tint }))
   let total = 0
   for (const p of flat) total += p.geo.attributes.position.count
@@ -460,8 +461,8 @@ function merge(parts: Array<{ geo: BufferGeometry; tint: number }>): BufferGeome
   return out
 }
 
-const scale = (c: Rgb, k: number): Rgb => [c[0] * k, c[1] * k, c[2] * k]
-const mix = (a: Rgb, b: Rgb, t: number): Rgb => [
+export const scale = (c: Rgb, k: number): Rgb => [c[0] * k, c[1] * k, c[2] * k]
+export const mix = (a: Rgb, b: Rgb, t: number): Rgb => [
   a[0] + (b[0] - a[0]) * t,
   a[1] + (b[1] - a[1]) * t,
   a[2] + (b[2] - a[2]) * t,

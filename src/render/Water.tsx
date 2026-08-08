@@ -16,7 +16,7 @@ import {
 import type { World } from '../sim/world'
 import { rgbToHex } from '../sim/palette'
 import { HALF_WORLD } from '../sim/terrain'
-import { FOG_DENSITY } from './atmosphere'
+import { CLOUD_SHADOW_GLSL, FOG_DENSITY, cloudShadowSeed } from './atmosphere'
 
 /**
  * Lakes and sea. One plane at the day's water level; wherever the terrain is below
@@ -90,6 +90,10 @@ export function Water({ world }: { world: World }) {
         uHeightRange: { value: range },
         uWaterLevel: { value: hf.waterLevel },
         uHeightUv: { value: new Vector2(uvScale, uvOffset) },
+        // Cloud shadows share the terrain's exact field — same seed, same wind,
+        // same clock — so a patch of shade crosses the shoreline in one piece.
+        uCloudWind: { value: new Vector2(world.air.windX, world.air.windZ) },
+        uCloudSeed: { value: cloudShadowSeed(world.seed) },
       },
       vertexShader: /* glsl */ `
         varying vec3 vWorld;
@@ -118,9 +122,13 @@ export function Water({ world }: { world: World }) {
         uniform float uHeightRange;
         uniform float uWaterLevel;
         uniform vec2 uHeightUv;
+        uniform vec2 uCloudWind;
+        uniform float uCloudSeed;
         varying vec3 vWorld;
         varying float vFog;
         varying float vDist;
+
+        ${CLOUD_SHADOW_GLSL}
 
         // Cheap crossed-wave surface. Three scales of ripple is enough to read as
         // texture from 200 m up, and it costs no texture fetch.
@@ -189,6 +197,7 @@ export function Water({ world }: { world: World }) {
           float spec = pow(max(dot(n, h), 0.0), 220.0);
           col += uSun * spec * 1.6;
 
+          col *= cloudShadow(vWorld.xz, uCloudWind, uTime, uCloudSeed);
           col = mix(col, uFog, vFog);
           // The soft shore itself: water thins to nothing over its last two
           // metres of depth, so the waterline is a gradient the width of a

@@ -1,11 +1,13 @@
-import { useMemo } from 'react'
-import { BufferAttribute, BufferGeometry } from 'three'
+import { useMemo, useRef } from 'react'
+import { useFrame } from '@react-three/fiber'
+import { BufferAttribute, BufferGeometry, MeshLambertMaterial, Vector2 } from 'three'
 import type { World } from '../sim/world'
 import { HALF_WORLD, clamp01, smoothstep } from '../sim/terrain'
 import { Noise2D, fbm } from '../sim/noise'
 import { mulberry32 } from '../sim/rng'
 import type { BiomeId, Rgb } from '../sim/palette'
 import { FLORA, createForestMask, forestAmount, forestColour } from '../sim/flora'
+import { CLOUD_SHADOW_GLSL, cloudShadowSeed } from './atmosphere'
 
 /**
  * Where the permanent snow starts, as a fraction of the day's height range. At or
@@ -47,12 +49,57 @@ const VEIN = { octaves: 2, frequency: 1 / 620, lacunarity: 2.3, gain: 0.5 }
  */
 export function Terrain({ world }: { world: World }) {
   const geometry = useMemo(() => buildGeometry(world), [world])
+  const material = useMemo(() => makeMaterial(world), [world])
 
-  return (
-    <mesh geometry={geometry} frustumCulled={false}>
-      <meshLambertMaterial vertexColors />
-    </mesh>
-  )
+  const clock = useRef(0)
+  useFrame((_, dt) => {
+    clock.current += Math.min(dt, 0.1)
+    material.userData.uCloudTime.value = clock.current
+  })
+
+  return <mesh geometry={geometry} material={material} frustumCulled={false} />
+}
+
+/**
+ * Lambert with the cloud-shadow field injected. The multiply happens before the
+ * fog include on purpose: shade applied after fog would survive into the haze,
+ * and the horizon would mottle where everything is supposed to converge on one
+ * colour. Trees deliberately do not get the shadow — at their size the
+ * mismatch is unreadable, and it saves patching a second material.
+ */
+function makeMaterial(world: World): MeshLambertMaterial {
+  const mat = new MeshLambertMaterial({ vertexColors: true })
+  const uCloudTime = { value: 0 }
+  const uCloudWind = { value: new Vector2(world.air.windX, world.air.windZ) }
+  const uCloudSeed = { value: cloudShadowSeed(world.seed) }
+  mat.userData.uCloudTime = uCloudTime
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.uCloudTime = uCloudTime
+    shader.uniforms.uCloudWind = uCloudWind
+    shader.uniforms.uCloudSeed = uCloudSeed
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec2 vCloudXZ;')
+      .replace(
+        '#include <begin_vertex>',
+        '#include <begin_vertex>\nvCloudXZ = (modelMatrix * vec4(position, 1.0)).xz;',
+      )
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <common>',
+        `#include <common>
+        varying vec2 vCloudXZ;
+        uniform float uCloudTime;
+        uniform vec2 uCloudWind;
+        uniform float uCloudSeed;
+        ${CLOUD_SHADOW_GLSL}`,
+      )
+      .replace(
+        '#include <fog_fragment>',
+        `gl_FragColor.rgb *= cloudShadow(vCloudXZ, uCloudWind, uCloudTime, uCloudSeed);
+        #include <fog_fragment>`,
+      )
+  }
+  return mat
 }
 
 function buildGeometry(world: World): BufferGeometry {
@@ -127,6 +174,42 @@ function buildGeometry(world: World): BufferGeometry {
         (1 - smoothstep(0.18, 0.55, slope)) *
         (1 - smoothstep(0.5, 0.82, t))
       if (meadow > 0) lerp3(c, c, pal.bloom, meadow * 0.3)
+
+      // The farmland quilt, field biome only. A patchwork of worked fields is
+      // *the* iconic view from a glider, and the flats here were the largest
+      // unbroken colour in the game. Cells are warped by the same noises as
+      // everything else so the grid reads as country, not graph paper; some
+      // fields turn toward hay gold, and the darker seams between cells read
+      // as hedgerows. All free — this runs once at world build.
+      if (world.biome === 'field') {
+        const cell = 470
+        const qx = (x + patch * 210) / cell
+        const qz = (z + vein * 210) / cell
+        const cx = Math.floor(qx)
+        const cz = Math.floor(qz)
+        const open =
+          (1 - forest) * (1 - smoothstep(0.12, 0.26, slope)) * (1 - smoothstep(0.45, 0.7, t))
+        if (open > 0.05) {
+          const tone = hash2(cx, cz)
+          const gold = smoothstep(0.62, 0.8, hash2(cx + 77, cz - 31))
+          // Each field is a hair lighter or darker than its neighbours...
+          const v = 1 + (tone - 0.5) * 0.14 * open
+          c[0] *= v
+          c[1] *= v
+          c[2] *= v
+          // ...some are cut for hay...
+          if (gold > 0) lerp3(c, c, pal.mid, gold * open * 0.38)
+          // ...and the seams between them are hedgerows.
+          const fx = qx - cx
+          const fz = qz - cz
+          const edge = Math.min(fx, 1 - fx, fz, 1 - fz)
+          const hedge = 1 - smoothstep(0.025, 0.06, edge)
+          const dark = 1 - hedge * open * 0.24
+          c[0] *= dark
+          c[1] *= dark
+          c[2] *= dark
+        }
+      }
 
       if (snowline < 1) {
         // The snowline wanders with the same field as everything else, so it is a

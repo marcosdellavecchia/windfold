@@ -275,6 +275,7 @@ src/render/       R3F components; all transforms driven from one useFrame
   Clouds.tsx      cumulus billboards, one per thermal
   Water.tsx       fresnel + glitter + ripple, no render target
   Birds.tsx       flocks circling the nearest columns, and one skein passing through
+  Herds.tsx       animals: sheep, deer, ibex, flamingos, seals, turtles
   Motes.tsx       near-field dust, wrapped around the camera
   Sky.tsx         gradient dome: sun, moon, cirrus, counter-glow, rays, ice halo,
                   daylight stars, falling stars
@@ -535,6 +536,32 @@ with depth-test on, so a route behind a hill reads as behind the hill. White on
 purpose: the cyan/purple/pink bands are reserved for other players' trails, so the
 two layers will never fight when the backend lands. Paths live in memory only, per
 the persistence table; six extra draw calls, no new materials science.
+
+**The alive pass.** Three changes with one aim: ground that something happens on.
+
+Cloud shadows drift across terrain and water, the single cheapest thing that makes
+a landscape read as living from the air. One two-octave noise field at cumulus
+scale, scrolled with the day's wind, multiplied in *before* the fog in both
+shaders — shade applied after fog would mottle the horizon where everything must
+converge on one colour — and shared through `atmosphere.ts` with one seed and one
+clock, so a patch of shade crosses a shoreline in one piece.
+
+Animals, one species per biome, in herds rather than sprinkled: sheep in the
+hedgerow pastures, deer at the clearing edges, ibex strung along the ledges,
+flamingos in a pink crescent on the playa, seals hauled out under the headlands,
+turtles up the tropical beaches. Volcanic days get nothing, which says more than
+an eighth species would. Each animal drifts around its home on two incommensurate
+sines — no AI, no state, and from altitude it reads as grazing. Placement rides
+the same deterministic scatter cells as the trees. Two lessons came out of the
+filters: shore species must not also be gated by height band, because the
+waterline's *fraction* of the height range moves with the day's water roll, and
+their herd centres need several candidate darts per cell — a habitat that is a
+ten-metre ribbon is never hit by one throw at a 384 m square.
+
+And the field biome got its farmland quilt: cells warped by the terrain's own
+noises, each field a hair lighter or darker, some cut for hay gold, the seams
+between them darkened into hedgerows. A patchwork of worked fields is *the*
+iconic view from a glider, and it was free — vertex colours, once, at build.
 
 **Music.** Synthesised in the browser, not streamed — same reasoning as the terrain.
 Rule 5 forbids third-party requests and the load budget is three seconds; a few minutes
