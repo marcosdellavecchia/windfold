@@ -135,7 +135,7 @@ function Simulation({ world, planeRef, trail }: SimProps) {
         const d = flight.distance
         const isBest = d > stats.current.best
         if (isBest) stats.current.best = d
-        writeHud({ newBest: isBest, lastDistance: d })
+        writeHud({ newBest: isBest, lastDistance: d, landed: flight.landed })
       }
       prevPhase.current = flight.phase
     }

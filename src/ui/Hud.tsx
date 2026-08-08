@@ -3,7 +3,7 @@ import type { World } from '../sim/world'
 
 const metres = (v: number) => Math.round(v).toLocaleString('en-US')
 
-export function Hud({ world }: { world: World }) {
+export function Hud({ world, par }: { world: World; par: number }) {
   const s = useHud()
 
   return (
@@ -34,6 +34,8 @@ export function Hud({ world }: { world: World }) {
             Day {world.day} · {world.palette.mood} {world.biome} · wind{' '}
             {Math.round(world.air.windSpeed)} m/s
           </div>
+          {/* The day's completable goal: beat the paper pilot and the day is won. */}
+          <div className="par">par {metres(par)} m</div>
           <div className="hint">Move to steer · click or space to launch</div>
         </div>
       )}
@@ -41,11 +43,15 @@ export function Hud({ world }: { world: World }) {
       {s.phase === 'down' && (
         <div className="result">
           {s.newBest && <div className="fanfare">New best</div>}
+          {/* The one guaranteed-negative moment of every flight, made winnable:
+              a flared, level touchdown is a landing, not a crash. */}
+          {s.landed && <div className="soft">Gentle landing</div>}
           <div className="big">
             {metres(s.lastDistance)} <span className="unit">m</span>
           </div>
           <div className="meta">
-            best {metres(s.best)} m · {s.attempts} {s.attempts === 1 ? 'flight' : 'flights'}
+            best {metres(s.best)} m · par {metres(par)} m{s.best >= par ? ' ✓' : ''} ·{' '}
+            {s.attempts} {s.attempts === 1 ? 'flight' : 'flights'}
           </div>
           <div className="again">Fly again</div>
         </div>

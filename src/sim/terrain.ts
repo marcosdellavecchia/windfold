@@ -6,10 +6,11 @@ import type { BiomeId } from './palette'
  * 12 km across at 32 m cells — the same 385^2 vertex count and draw cost as the
  * original 6 km / 16 m map, for four times the area.
  *
- * The map size is a scoring constraint, not just a scenery one: distance is
- * straight-line displacement from the launch, so the map radius is a hard ceiling
- * on the score. At 6 km a hands-off glide already covered a third of the available
- * range, which left almost no room for skill to show up in the number.
+ * The map size was doubled when the score was straight-line displacement and the
+ * map radius was therefore a hard ceiling on it. The score is path distance flown
+ * now, which has no such ceiling — but the size still matters: it is the room a
+ * flight has to wander before the border ends it, and the fog-to-border ratio is
+ * what keeps the world feeling open.
  *
  * Coarser cells mean the finest noise octave has to go — see SHAPES below.
  */

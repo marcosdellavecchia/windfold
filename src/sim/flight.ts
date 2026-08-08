@@ -1,7 +1,7 @@
 import { Quaternion, Vector3 } from 'three'
 import { TUNING } from './tuning'
 import { sampleAir, type Air, type Vec3Like } from './air'
-import { clamp, surfaceHeight, sampleHeight, HALF_WORLD, type Heightfield } from './terrain'
+import { clamp, surfaceHeight, sampleHeight, sampleGradient, HALF_WORLD, type Heightfield } from './terrain'
 
 export type Phase = 'ready' | 'flying' | 'down'
 
@@ -42,7 +42,20 @@ export class Flight {
 
   phase: Phase = 'ready'
   time = 0
+  /**
+   * Path distance flown, not displacement from the launch.
+   *
+   * Displacement was the original score and it fought the game's own core
+   * mechanic: circling in a thermal — the most satisfying thing the air offers —
+   * froze the number, so the scoring was telling the player the soaring was
+   * wasted time. Path distance keeps ticking through a climb, the way Tiny Wings
+   * and Alto's count the journey, and it removes the map radius as a hard ceiling
+   * on the score. It is not farmable: thermal tops, ambient sink and the day's
+   * fixed lift budget bound how long the path can get.
+   */
   distance = 0
+  /** True when the flight ended in a gentle touchdown rather than a crash. */
+  landed = false
   /** Signed climb rate of the aircraft, m/s. */
   vario = 0
   /** Vertical speed of the air itself — what the thermal indicator reads. */
@@ -63,6 +76,7 @@ export class Flight {
 
   // Scratch, reused every step to keep the hot loop allocation-free.
   private readonly airVel: Vec3Like = { x: 0, y: 0, z: 0 }
+  private readonly grad = { x: 0, z: 0 }
   private readonly relVel = new Vector3()
   private readonly bodyRel = new Vector3()
   private readonly fwd = new Vector3()
@@ -88,6 +102,7 @@ export class Flight {
     this.phase = 'ready'
     this.time = 0
     this.distance = 0
+    this.landed = false
     this.vario = 0
     this.airLift = 0
     this.stallFactor = 0
@@ -245,6 +260,10 @@ export class Flight {
     this.vel.addScaledVector(this.force, dt / T.mass)
     this.pos.addScaledVector(this.vel, dt)
     this.time += dt
+    // Ground track, not 3D arc length: a climb scores the circles it flies, not
+    // the height it gains — height is banked energy, and it pays out as track
+    // when it is spent.
+    this.distance += Math.hypot(this.vel.x, this.vel.z) * dt
 
     // --- control -----------------------------------------------------------
     const authority = Math.min(1, V / T.authoritySpeed) ** 2
@@ -293,16 +312,28 @@ export class Flight {
     this.vario = this.vel.y
     const ground = surfaceHeight(this.hf, this.pos.x, this.pos.z)
     this.aglHeight = this.pos.y - ground
-    const dx = this.pos.x - this.launchPos.x
-    const dz = this.pos.z - this.launchPos.z
-    this.distance = Math.sqrt(dx * dx + dz * dz)
 
     if (this.pos.y <= ground + T.crashClearance) {
       this.pos.y = ground + T.crashClearance
+      // A landing, not a crash, when the touchdown is flared, level, and on
+      // ground that could take it. Trim sink is ~2.1 m/s, so gliding straight
+      // into the ground does not qualify — the flare that converts speed into a
+      // soft arrival is the same energy trade the whole game is built on, asked
+      // for one more time at the very end. Water counts: its surface is flat
+      // even where the seabed under it is not.
+      const onWater = this.hf.hasWater && sampleHeight(this.hf, this.pos.x, this.pos.z) < this.hf.waterLevel
+      let slope = 0
+      if (!onWater) {
+        sampleGradient(this.hf, this.pos.x, this.pos.z, this.grad)
+        slope = Math.hypot(this.grad.x, this.grad.z)
+      }
+      this.landed = this.vel.y > -2.0 && Math.abs(this.bank) < 0.35 && slope < 0.35
       this.land()
       return
     }
     if (Math.abs(this.pos.x) > HALF_WORLD * 0.985 || Math.abs(this.pos.z) > HALF_WORLD * 0.985) {
+      // Drifting off the edge of the world is an ending, not an arrival.
+      this.landed = false
       this.land()
     }
   }

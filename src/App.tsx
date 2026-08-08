@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { buildWorld, dayNumber } from './sim/world'
+import { computePar } from './sim/par'
 import { Scene } from './render/Scene'
 import { Hud } from './ui/Hud'
 import { TuningPanel } from './ui/TuningPanel'
@@ -18,6 +19,9 @@ export default function App() {
     return Number.isFinite(n) ? Math.trunc(n) : dayNumber()
   })
   const world = useMemo(() => buildWorld(day), [day])
+  // The paper pilot flies the day once, headlessly, and its distance is par.
+  // ~100 ms at world build, deterministic, no server involved.
+  const par = useMemo(() => computePar(world), [world])
 
   // Keep ?day= in sync when the day is changed from the panel or the R shortcut,
   // so any world found while testing survives a reload and can be linked to.
@@ -43,7 +47,7 @@ export default function App() {
         <Scene world={world} />
       </Canvas>
       <div className="dream" aria-hidden="true" />
-      <Hud world={world} />
+      <Hud world={world} par={par} />
       <AudioToggle muted={music.muted} onToggle={music.toggle} />
       <TuningPanel day={day} onDay={changeDay} world={world} />
     </>

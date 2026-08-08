@@ -216,6 +216,14 @@ canvas {
   font-variant-numeric: tabular-nums;
 }
 
+.prompt .par {
+  margin-top: 4px;
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  color: var(--ui-dim);
+  font-variant-numeric: tabular-nums;
+}
+
 .prompt .hint {
   margin-top: 26px;
   font-size: 13px;
@@ -235,6 +243,15 @@ canvas {
   letter-spacing: 0.3em;
   text-transform: uppercase;
   color: #7ef7c4;
+  margin-bottom: 10px;
+}
+
+/* Calmer than the fanfare on purpose: a landing is a warm note, not a shout. */
+.result .soft {
+  font-size: 12px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.72);
   margin-bottom: 10px;
 }
 

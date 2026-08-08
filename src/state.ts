@@ -19,6 +19,8 @@ export interface HudState {
   /** Set on the frame a flight ends, so the results screen can shout about it. */
   newBest: boolean
   lastDistance: number
+  /** Whether the last flight ended in a gentle touchdown rather than a crash. */
+  landed: boolean
 }
 
 const HUD_HZ = 12
@@ -35,6 +37,7 @@ const draft: HudState = {
   stall: 0,
   newBest: false,
   lastDistance: 0,
+  landed: false,
 }
 
 let snapshot: HudState = { ...draft }

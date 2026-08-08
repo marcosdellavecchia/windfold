@@ -4,12 +4,13 @@
  *
  *   npx esbuild src/dev/glideTest.ts --bundle --platform=node --format=esm --outfile=<tmp>.mjs && node <tmp>.mjs
  */
-import { buildWorld, type World } from '../sim/world'
+import { buildWorld } from '../sim/world'
 import { Flight } from '../sim/flight'
 import { TUNING } from '../sim/tuning'
-import { sampleAir, type Thermal } from '../sim/air'
+import { sampleAir } from '../sim/air'
 import { BIOME_ORDER } from '../sim/palette'
 import { sampleHeight, surfaceHeight } from '../sim/terrain'
+import { computePar, makeChasePilot, nearestForward } from '../sim/par'
 
 const DT = 1 / 60
 
@@ -41,86 +42,6 @@ function fly(day: number, pilot: (f: Flight, t: number) => { x: number; y: numbe
 
 const level = () => ({ x: 0, y: 0 })
 
-/**
- * Nearest thermal that is further downwind than we already are. The downwind
- * progress test is what stops the autopilot ping-ponging between two adjacent
- * columns — which it will happily do forever, staying airborne and going nowhere.
- */
-function nearestForward(
-  world: World,
-  x: number,
-  z: number,
-  dx: number,
-  dz: number,
-  minProgress: number,
-): { t: Thermal; i: number } | null {
-  let best: { t: Thermal; i: number } | null = null
-  let bestCost = Infinity
-  world.air.thermals.forEach((t, i) => {
-    const progress = (t.x - world.launch.pos.x) * dx + (t.z - world.launch.pos.z) * dz
-    if (progress < minProgress) return
-    const range = Math.hypot(t.x - x, t.z - z)
-    if (range < 150) return
-    if (range < bestCost) {
-      bestCost = range
-      best = { t, i }
-    }
-  })
-  return best
-}
-
-/** How far downwind of the launch a point is. */
-const progressOf = (world: World, x: number, z: number, dx: number, dz: number) =>
-  (x - world.launch.pos.x) * dx + (z - world.launch.pos.z) * dz
-
-/**
- * A rough cross-country autopilot: glide to the next column, circle while it is
- * lifting, move on. It exists to measure the *ceiling* of a day — the distance
- * available to someone who uses the air — so it can be compared against the
- * hands-off floor. It is not clever, so treat its number as a lower bound.
- */
-function makeChasePilot(world: World) {
-  const dx = Math.cos(world.air.windDir)
-  const dz = Math.sin(world.air.windDir)
-  let target = nearestForward(world, world.launch.pos.x, world.launch.pos.z, dx, dz, 0)
-  let climbing = false
-
-  return (f: Flight) => {
-    const holdSpeed = (want: number) => Math.max(-1, Math.min(1, (want - f.airspeed) * -0.12))
-
-    // Only circle when the lift is a thermal. Ridge lift is also positive air, but
-    // circling in it just drifts off the slope and loses everything — an earlier
-    // version of this pilot spent 226 s doing exactly that and covered 650 m.
-    const inCore = world.air.thermals.some(
-      (t) => Math.hypot(t.x - f.pos.x, t.z - f.pos.z) < t.radius * 1.3,
-    )
-    if (f.airLift > 1.5 && inCore) climbing = true
-    // Leave once the climb has banked enough height for the next leg, rather than
-    // grinding to the top of every column — that is what a real pilot does, and
-    // without it the autopilot circles all day and covers no ground.
-    const climbedEnough = target ? f.pos.y > target.t.base + 420 : false
-    if (climbing && (f.airLift < 0.2 || climbedEnough || (target && f.pos.y > target.t.top - 120))) {
-      climbing = false
-      target = nearestForward(world, f.pos.x, f.pos.z, dx, dz, progressOf(world, f.pos.x, f.pos.z, dx, dz) + 250)
-    }
-
-    // Hard banking near the ground just flies into it; ease off when low.
-    const bankCap = f.aglHeight < 90 ? 0.4 : 1
-
-    if (climbing) return { x: Math.min(0.45, bankCap), y: holdSpeed(21) }
-
-    if (!target) return { x: 0, y: holdSpeed(24) }
-
-    // Steer toward the column, a bit faster than best glide between climbs.
-    const want = Math.atan2(target.t.z - f.pos.z, target.t.x - f.pos.x)
-    const have = Math.atan2(f.vel.z, f.vel.x)
-    let err = want - have
-    while (err > Math.PI) err -= Math.PI * 2
-    while (err < -Math.PI) err += Math.PI * 2
-    return { x: Math.max(-bankCap, Math.min(bankCap, err * 1.6)), y: holdSpeed(24) }
-  }
-}
-
 console.log('--- world generation ------------------------------------------')
 console.time('buildWorld')
 const w0 = buildWorld(0)
@@ -132,6 +53,10 @@ console.log(
 console.log(
   `launch: (${w0.launch.pos.x.toFixed(0)}, ${w0.launch.pos.y.toFixed(0)}, ${w0.launch.pos.z.toFixed(0)})`,
 )
+console.time('computePar')
+const par0 = computePar(w0)
+console.timeEnd('computePar')
+console.log(`day 0 par: ${par0}m`)
 
 console.log('\n--- determinism -----------------------------------------------')
 const a = buildWorld(7)
@@ -174,6 +99,7 @@ for (let day = 0; day < SWEEP_DAYS; day++) {
 
 console.log('\n--- floor vs ceiling: hands-off, then chaining thermals --------')
 console.log('  (the chase pilot is crude, so its number is a lower bound on skilled play)')
+console.log('  (distances are path flown, matching the score — a climb counts its circles)')
 for (let day = 0; day < SWEEP_DAYS; day++) {
   const idle = fly(day, level)
   const chased = fly(day, makeChasePilot(buildWorld(day)))
@@ -184,7 +110,8 @@ for (let day = 0; day < SWEEP_DAYS; day++) {
       `hands-off ${idle.f.distance.toFixed(0).padStart(5)}m/${idle.t.toFixed(0).padStart(3)}s   ` +
       `chained ${chased.f.distance.toFixed(0).padStart(5)}m/${chased.t.toFixed(0).padStart(3)}s   ` +
       `climbed +${Math.max(0, chased.peak - chased.world.launch.pos.y).toFixed(0)}m   ` +
-      `${ratio.toFixed(1)}x`,
+      `${ratio.toFixed(1)}x   ` +
+      `par ${computePar(idle.world).toFixed(0).padStart(4)}m`,
   )
 }
 

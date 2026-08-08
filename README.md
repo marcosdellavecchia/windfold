@@ -80,8 +80,9 @@ Land on the page → see the landscape and today's ghost trails → press to lau
 glide → crash or land → distance in metres, compared against your best → **fly again**
 or stop → share card + streak → come back tomorrow.
 
-**Score is a single number: the longest distance in metres you reached today.
-Alongside it, the number of flights it took.**
+**Score is a single number: the longest distance in metres you flew today —
+path flown, not displacement. Alongside it, the number of flights it took, and
+whether you beat the day's par.**
 
 The results screen after every flight shows: this flight's distance, your best so far,
 your attempt count, and a prominent *Fly again*. Beating your best should be loud —
@@ -109,6 +110,9 @@ This is the whole game. Most of the tuning time goes here.
 - **Ridge lift** — air pushed up windward slopes. Skimming a ridge is rewarded, so reading terrain matters.
 - Wind is a seeded global vector for the day with mild altitude variation.
 - Terrain contact or water contact ends the flight. Log distance at the moment of contact.
+- **Score is path distance flown, not displacement from the launch.** Displacement froze the number while the player circled in a thermal — the scoring told them the game's best moment was wasted time — and it was hard-capped by the map radius. Path distance keeps ticking through a climb and has no ceiling.
+- **A flared, level touchdown on gentle ground is a landing, not a crash.** Same score, different ending: the flare is the game's core energy trade, asked for once more at the very end, and it turns the one guaranteed-negative moment of every flight into a possible small win.
+- **Every day has a par: what the paper pilot scores.** The chase autopilot from the test harness flies the day once at world build — one 150 s flight, floored at hands-off, rounded to 50 m — and that number is the day's completable goal. Deterministic from the seed, no server. Beat the paper pilot and the day is won, however far the grinders go past it; par also makes days comparable, because +400 m over par means the same thing on a mean day and a monster one.
 - **Restart must be instant.** With unlimited retries, any delay between crashing and flying again is the single biggest thing that will kill the session. No loading, no fade, no confirmation — the terrain is already resident, so re-launch should be a state reset and nothing more.
 
 Physics is plain TypeScript, outside React. No physics engine — Rapier is overkill
@@ -459,6 +463,40 @@ not level; meadow patches on the open gentle ground between the woods; and a sno
 that wanders on the same noise as everything else instead of drawing a ring around
 the peak.
 
+**The score, the par, and the landing.** Three mechanics decisions, made together
+because they are one decision about what kind of game this is.
+
+The score is now *path distance flown*. Displacement — the original metric — was
+resolved as a known gap: it was hard-capped by the map radius, and worse, it froze
+while the player circled in a thermal, so the scoring actively told them the most
+satisfying thing in the game was wasted time. Path distance counts the journey the
+way Tiny Wings and Alto's do. Measured over the 21-day sweep, hands-off flights
+barely change (they fly straight) while the thermal-chaining autopilot now scores
+1.1–5.0× hands-off, always above it — under displacement it frequently scored
+*below* hands-off despite flying four times longer, which said everything about the
+old metric. The ground track is what accumulates: a climb scores the circles it
+flies, and the height it banks pays out as track when it is spent.
+
+Par is the day's completable goal, for the player who wants to win and stop rather
+than grind — Wordle works because six rows is *done*, and a pure distance chase has
+no done. The paper pilot (the same chase autopilot the harness uses) flies the day
+once at world build: one honest 150-second flight, floored at the hands-off glide,
+rounded to 50 m, about 60 ms of compute, deterministic from the seed with no server
+involved. It was first given the full 300 s the harness allows and came back with
+5.4 km pars — a goal most players can never reach is a stressor, which is the
+opposite of this mechanic's job. Capped, pars land at 2.2–4.1 km against a ~2 km
+hands-off floor: you must use the air to beat the pilot, but you need not move in.
+Par also normalises days against each other, which raw distance never did.
+
+And a flared, level touchdown on gentle ground (or water — the surface is flat even
+where the seabed is not) now ends the flight as a **landing** rather than a crash.
+No score change, deliberately: a quiet line on the results screen, not a bonus to
+optimise. Trim sink is 2.1 m/s and the landing threshold is 2.0, so gliding
+passively into the ground does not qualify — the flare that converts the last of
+the speed into a soft arrival is the game's core energy trade, asked for one final
+time. Alto's made the smooth landing its signature feel-good beat; this is that,
+sized for a game where every previous flight ended in a wall of flat green.
+
 **Music.** Synthesised in the browser, not streamed — same reasoning as the terrain.
 Rule 5 forbids third-party requests and the load budget is three seconds; a few minutes
 of ambient piano is a megabyte and a round trip, whereas this is a few kilobytes of code
@@ -478,15 +516,6 @@ launches the first flight, so in practice it begins when the game does. Measured
 is −29 dBFS RMS / −14 dBFS peak: present, but under conversation level.
 
 **Known gaps in the current build**
-
-- **The score metric is now the binding constraint, not the tuning.** Distance is
-  straight-line displacement from the launch, so it is hard-capped by the map radius
-  (~5.5 km) while a hands-off flight already reaches 1.0–2.4 km on a typical day and,
-  measured over 60 days rather than six, 4.6 km on the worst one. That leaves at most
-  ~4× of headroom for skill to show up in the number, even though using the air already
-  triples or quadruples *time aloft*. Worth resolving before the share card fixes the
-  format: keep displacement and push the floor down, score path distance flown, or score
-  time aloft.
 - **60 fps on a mid-tier Android is still unverified**, and the dream pass has not
   helped: the sky is now a four-octave fbm over a full-screen dome, and the
   understory added a third instanced species to the rescatter burst. Desktop had a
