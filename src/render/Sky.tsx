@@ -11,9 +11,11 @@ import { rgbToHex } from '../sim/palette'
  * Everything above the plain gradient is here because the sky is two-thirds of the
  * frame on a glider and a two-stop ramp is not enough to look at for ten minutes:
  * cirrus drawn out along the day's wind, the counter-glow band opposite the sun, a
- * moon, crepuscular rays, and a sun disc that is flattened by refraction and
- * shimmers slightly. None of it is correct physics. All of it is the kind of detail
- * you half-notice, which is what makes a place feel remembered rather than drawn.
+ * moon with maria and earthshine, crepuscular rays, an ice-halo ring, stars that
+ * hang in the daylight, a falling star every minute or so, and a sun disc that is
+ * flattened by refraction and shimmers slightly. None of it is correct physics.
+ * All of it is the kind of detail you half-notice, which is what makes a place
+ * feel remembered rather than drawn.
  */
 export function Sky({ world }: { world: World }) {
   const material = useMemo(() => {
@@ -140,6 +142,51 @@ export function Sky({ world }: { world: World }) {
           float sunNear = pow(max(dot(d, sd), 0.0), 6.0);
           sky = mix(sky, mix(uCirrus, uSun, 0.2 + 0.6 * sunNear), c * 0.5);
 
+          // --- stars, in daylight ---------------------------------------------
+          // Wrong the way the daytime moon is wrong, and there on purpose: a few
+          // stars hang in the deep blue of the upper dome, where the day is
+          // darkest. They keep clear of the sun, dim under the cirrus, and each
+          // one breathes on its own period. Some days the sky holds more of them
+          // than others; that is the seed's business.
+          vec2 pp = d.xz / (d.y + 0.55);
+          vec2 sp = pp * 13.0;
+          vec2 scell = floor(sp);
+          vec2 sfrac = fract(sp);
+          float sh = hash21(scell + floor(uSeed * 91.0));
+          vec2 spos = vec2(hash21(scell + 7.1), hash21(scell + 3.7)) * 0.8 + 0.1;
+          float sdist = length(sfrac - spos);
+          float density = 0.72 + 0.28 * fract(uSeed * 13.7);
+          float gate = step(1.0 - 0.16 * density, sh);
+          float tw = 0.55 + 0.45 * sin(uTime * (0.6 + sh * 2.2) + sh * 41.0);
+          float star = gate * exp(-sdist * sdist * 240.0) * tw * (0.4 + sh * 0.8);
+          float starZone = smoothstep(0.30, 0.62, up);
+          starZone *= 1.0 - smoothstep(0.35, 0.75, max(dot(d, sd), 0.0));
+          starZone *= 1.0 - c * 0.85;
+          sky += mix(vec3(1.0), uCirrus, 0.35) * star * 0.55 * starZone;
+
+          // --- a falling star --------------------------------------------------
+          // Every so often one comes down across the high sky, gone in a second.
+          // Each cycle draws its own start point and heading; many fall outside
+          // the dome entirely, which is what makes catching one feel like luck
+          // rather than a scheduled effect.
+          float mper = 41.0;
+          float mcyc = floor(uTime / mper);
+          float mt = uTime - mcyc * mper;
+          float mlife = 1.1;
+          float mprog = clamp(mt / mlife, 0.0, 1.0);
+          vec2 m0 = vec2(hash21(vec2(mcyc, uSeed)), hash21(vec2(uSeed, mcyc))) * 3.0 - 1.5;
+          float mang = hash21(vec2(mcyc + 3.3, uSeed)) * 6.283;
+          vec2 mdir2 = vec2(cos(mang), sin(mang));
+          vec2 mhead = m0 + mdir2 * mprog * 1.4;
+          vec2 mtail = -mdir2 * 0.30;
+          vec2 mw = pp - mhead;
+          float mproj = clamp(dot(mw, mtail) / dot(mtail, mtail), 0.0, 1.0);
+          float mdist = length(mw - mtail * mproj);
+          float alive = step(mt, mlife) * (1.0 - mprog);
+          float streak = exp(-mdist * mdist * 2600.0) * (1.0 - mproj * 0.85) * alive;
+          streak += exp(-dot(mw, mw) * 800.0) * alive * 0.7;
+          sky += mix(vec3(1.0), uSun, 0.25) * streak * 0.5 * smoothstep(0.25, 0.5, up);
+
           // --- moon ---------------------------------------------------------
           vec3 mr, mu;
           vec3 md = normalize(uMoonDir);
@@ -151,10 +198,24 @@ export function Sky({ world }: { world: World }) {
           // Phase is a second disc subtracted off the first, offset sideways. Crude,
           // and indistinguishable from the real thing at this size.
           float dark = 1.0 - smoothstep(0.013, 0.020, length(mo - vec2(uMoonPhase * 0.026, 0.0)));
-          moon *= 1.0 - dark * 0.9;
-          vec3 moonCol = mix(vec3(1.0), uGlow, 0.3);
-          sky = mix(sky, moonCol, moon * 0.7);
-          sky += moonCol * exp(-mr2 * 42.0) * 0.04 * mFront;
+          float lit = moon * (1.0 - dark * 0.94);
+          float shadowed = moon * dark;
+          // Maria: the same value noise as everything else, twice, which is all a
+          // disc a degree wide can carry — but a blank moon reads as a hole punch
+          // and a mottled one reads as the moon.
+          float mare = vnoise(mo * 260.0 + uSeed * 9.0) * 0.6 + vnoise(mo * 560.0 - uSeed * 4.0) * 0.4;
+          vec3 moonCol = mix(vec3(1.0), uGlow, 0.3) * (1.0 - mare * 0.22);
+          // Limb darkening, so the disc has a far side.
+          moonCol *= 1.0 - smoothstep(0.011, 0.020, mr2) * 0.28;
+          sky = mix(sky, moonCol, lit * 0.75);
+          // Earthshine: the dark side is never black, it is the ghost of the disc
+          // lit by somewhere else entirely. Cool, because the shadow of a world
+          // should not be warm.
+          sky = mix(sky, mix(uTop, vec3(1.0), 0.3), shadowed * 0.14);
+          sky += moonCol * exp(-mr2 * 42.0) * 0.05 * mFront;
+          // Lunar corona: one tight iridescent ring hugging the disc.
+          float mringT = (mr2 - 0.031) * 95.0;
+          sky += mix(uGlow, uCirrus, 0.55) * exp(-mringT * mringT) * 0.045 * mFront;
 
           // --- sun ----------------------------------------------------------
           vec3 sr, su;
@@ -174,12 +235,27 @@ export function Sky({ world }: { world: World }) {
           // The mirage notch a low sun gets cut by over a horizon.
           float notch = 1.0 - smoothstep(0.0, 0.004, abs(so.y + 0.007));
           disc *= 1.0 - 0.4 * notch * (1.0 - sd.y);
-          sky += uSun * disc * 1.2;
+          // Hot at the core, the day's colour at the limb. A flat disc reads as a
+          // sticker; two stops of limb gradient read as something burning.
+          vec3 sunDisc = mix(mix(uSun, vec3(1.0), 0.65), uSun, smoothstep(0.004, 0.020, r));
+          sky += sunDisc * disc * 1.25;
 
           // Halo. With tone mapping off a wide bloom clips straight to white and
           // swallows a third of the sky, so both falloffs are tight.
           sky += uSun * exp(-r * 26.0) * 0.20 * sFront;
           sky += uSun * exp(-r * 4.5) * 0.07 * sFront;
+
+          // The ice halo: the 22-degree ring, shrunk to fit the frame and tinted
+          // the way the real one is — warm on the inner edge, cold outside. It
+          // breathes a little, because nothing in this sky is allowed to be a
+          // fixed diagram. The one openly lysergic thing here, kept faint enough
+          // to be half-noticed rather than seen.
+          float theta = acos(clamp(dot(d, sd), -1.0, 1.0));
+          float ringR = 0.155 + 0.006 * sin(uTime * 0.21 + uSeed);
+          float ringT = (theta - ringR) / 0.045;
+          float ring = exp(-ringT * ringT * 2.0);
+          vec3 ringCol = mix(uSun, mix(uTop, uCirrus, 0.5), clamp(ringT * 0.55 + 0.5, 0.0, 1.0));
+          sky += ringCol * ring * 0.085 * smoothstep(-0.02, 0.14, up);
 
           // --- crepuscular rays ---------------------------------------------
           // Layered odd harmonics so the spokes are irregular rather than a gear.
