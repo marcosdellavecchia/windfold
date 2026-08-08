@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import { Group, MathUtils, Vector3, type PerspectiveCamera } from 'three'
 import type { World } from '../sim/world'
 import { Flight } from '../sim/flight'
+import { Ghosts, type GhostData } from './Ghosts'
 import { TUNING } from '../sim/tuning'
 import { surfaceHeight } from '../sim/terrain'
 import { rgbToHex } from '../sim/palette'
@@ -64,6 +65,9 @@ interface SimProps {
   trail: Trail
 }
 
+/** How many previous attempts stay on screen, besides the best. */
+const GHOST_ATTEMPTS = 5
+
 function Simulation({ world, planeRef, trail }: SimProps) {
   const camera = useThree((s) => s.camera)
 
@@ -73,6 +77,7 @@ function Simulation({ world, planeRef, trail }: SimProps) {
   )
 
   const stats = useRef({ best: 0, attempts: 0 })
+  const [ghosts, setGhosts] = useState<GhostData>({ attempts: [], best: null })
   const prevPhase = useRef(flight.phase)
   const cam = useRef({
     pos: new Vector3(),
@@ -104,6 +109,7 @@ function Simulation({ world, planeRef, trail }: SimProps) {
     stats.current = { best: 0, attempts: 0 }
     cam.current.ready = false
     trail.clear()
+    setGhosts({ attempts: [], best: null })
   }, [world, trail])
 
   const scratch = useMemo(
@@ -136,6 +142,15 @@ function Simulation({ world, planeRef, trail }: SimProps) {
         const isBest = d > stats.current.best
         if (isBest) stats.current.best = d
         writeHud({ newBest: isBest, lastDistance: d, landed: flight.landed })
+        // Keep the flight's path as a ghost. `reset()` replaces the array rather
+        // than clearing it, so holding the reference is safe. The best is held
+        // separately from the rolling window, so it survives any number of
+        // later attempts — it is the line the player is flying against.
+        const path = flight.path
+        setGhosts((g) => ({
+          attempts: [...g.attempts, path].slice(-GHOST_ATTEMPTS),
+          best: isBest ? path : g.best,
+        }))
       }
       prevPhase.current = flight.phase
     }
@@ -234,5 +249,5 @@ function Simulation({ world, planeRef, trail }: SimProps) {
     flushHud(dt, phaseChanged)
   })
 
-  return null
+  return <Ghosts data={ghosts} />
 }
