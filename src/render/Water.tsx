@@ -1,6 +1,18 @@
 import { useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
-import { Color, DoubleSide, PlaneGeometry, ShaderMaterial, Mesh, Vector3 } from 'three'
+import {
+  Color,
+  DataTexture,
+  DoubleSide,
+  LinearFilter,
+  PlaneGeometry,
+  RGFormat,
+  ShaderMaterial,
+  Mesh,
+  UnsignedByteType,
+  Vector2,
+  Vector3,
+} from 'three'
 import type { World } from '../sim/world'
 import { rgbToHex } from '../sim/palette'
 import { HALF_WORLD } from '../sim/terrain'
@@ -28,6 +40,36 @@ export function Water({ world }: { world: World }) {
     const geo = new PlaneGeometry(HALF_WORLD * 12, HALF_WORLD * 12)
     geo.rotateX(-Math.PI / 2)
 
+    // The heightfield, packed into a small texture so the fragment shader knows
+    // how deep the water is at every pixel. This exists to fix the shaking
+    // coastline: the waterline used to be the raw depth intersection of two
+    // surfaces, which MSAA cannot antialias, so it drew as a hard stair-stepped
+    // edge that flickered pixel by pixel as the camera moved. With depth in
+    // hand, the water fades itself out over the last couple of metres instead —
+    // a soft shore has no intersection line left to alias or z-fight.
+    //
+    // 16 bits, packed into RG8 rather than a float texture: filtering float
+    // textures needs an extension that mobile does not reliably have, and the
+    // decode is linear, so bilinear filtering of the two packed bytes still
+    // reconstructs the exact filtered height.
+    const n = hf.seg + 1
+    const range = Math.max(hf.max - hf.min, 1)
+    const packed = new Uint8Array(n * n * 2)
+    for (let i = 0; i < n * n; i++) {
+      const v = Math.round(((hf.data[i] - hf.min) / range) * 65535)
+      packed[i * 2] = v >> 8
+      packed[i * 2 + 1] = v & 255
+    }
+    const heightTex = new DataTexture(packed, n, n, RGFormat, UnsignedByteType)
+    heightTex.magFilter = LinearFilter
+    heightTex.minFilter = LinearFilter
+    heightTex.needsUpdate = true
+
+    // World xz -> texel-centre UV. Grid point ix sits at x = -HALF + ix*cell and
+    // must sample texel centre (ix + 0.5)/n, so u = (x/cell + HALF/cell + 0.5)/n.
+    const uvScale = 1 / (hf.cell * n)
+    const uvOffset = (HALF_WORLD / hf.cell + 0.5) / n
+
     const mat = new ShaderMaterial({
       transparent: true,
       side: DoubleSide,
@@ -43,6 +85,11 @@ export function Water({ world }: { world: World }) {
         uFog: { value: new Color(rgbToHex(pal.fog)) },
         uSunDir: { value: world.sunDir.clone() as Vector3 },
         uTime: { value: 0 },
+        uHeight: { value: heightTex },
+        uHeightMin: { value: hf.min },
+        uHeightRange: { value: range },
+        uWaterLevel: { value: hf.waterLevel },
+        uHeightUv: { value: new Vector2(uvScale, uvOffset) },
       },
       vertexShader: /* glsl */ `
         varying vec3 vWorld;
@@ -66,6 +113,11 @@ export function Water({ world }: { world: World }) {
         uniform vec3 uFog;
         uniform vec3 uSunDir;
         uniform float uTime;
+        uniform sampler2D uHeight;
+        uniform float uHeightMin;
+        uniform float uHeightRange;
+        uniform float uWaterLevel;
+        uniform vec2 uHeightUv;
         varying vec3 vWorld;
         varying float vFog;
         varying float vDist;
@@ -89,6 +141,13 @@ export function Water({ world }: { world: World }) {
 
         void main() {
           vec3 viewDir = normalize(cameraPosition - vWorld);
+
+          // How much water is under this pixel. Beyond the map the texture
+          // clamps to the border heights, which the border mask keeps low, so
+          // the open sea stays deep all the way to the fog.
+          vec2 hg = texture2D(uHeight, vWorld.xz * uHeightUv.x + uHeightUv.y).rg;
+          float terrain = (hg.r * 65280.0 + hg.g * 255.0) / 65535.0 * uHeightRange + uHeightMin;
+          float depth = uWaterLevel - terrain;
 
           // Perturb the surface normal by the wave slope.
           float e = 6.0;
@@ -116,6 +175,10 @@ export function Water({ world }: { world: World }) {
           // colour where it is deeper or shallower, and that does not move at all.
           float mottle = sin(vWorld.x * 0.0009) * sin(vWorld.z * 0.0011);
           vec3 body = mix(uDeep, uShallow, 0.36 + mottle * 0.16);
+          // True shallows off the height texture, layered over the mottle: the
+          // last dozen metres of depth lighten toward the shore, which is what
+          // makes a coast read as shelving instead of cut with a knife.
+          body = mix(uShallow, body, smoothstep(0.0, 12.0, depth));
           // Capped well below 1: a physically full mirror at grazing angles turns every
           // lake and sea into the same colour as the sky, and the landscape goes
           // monochrome. Water keeps some of its own body colour at every angle.
@@ -127,7 +190,11 @@ export function Water({ world }: { world: World }) {
           col += uSun * spec * 1.6;
 
           col = mix(col, uFog, vFog);
-          gl_FragColor = vec4(col, mix(0.86, 0.97, fres));
+          // The soft shore itself: water thins to nothing over its last two
+          // metres of depth, so the waterline is a gradient the width of a
+          // beach's wet edge rather than an aliased intersection line.
+          float shore = smoothstep(0.0, 2.2, depth);
+          gl_FragColor = vec4(col, mix(0.86, 0.97, fres) * shore);
         }
       `,
     })

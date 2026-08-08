@@ -42,7 +42,10 @@ export default function App() {
         flat
         dpr={[1, 1.75]}
         gl={{ antialias: true, powerPreference: 'high-performance' }}
-        camera={{ fov: TUNING.fov, near: 0.5, far: 20000, position: [0, 400, 0] }}
+        // near 1.2, not 0.5: depth precision scales with the near plane, and the
+        // shoreline z-fight needed every bit of it. Nothing renders closer than
+        // 1.5 m anyway — the motes fade themselves out inside that.
+        camera={{ fov: TUNING.fov, near: 1.2, far: 20000, position: [0, 400, 0] }}
       >
         <Scene world={world} />
       </Canvas>
