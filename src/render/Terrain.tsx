@@ -79,16 +79,18 @@ function makeMaterial(world: World): MeshLambertMaterial {
     shader.uniforms.uCloudWind = uCloudWind
     shader.uniforms.uCloudSeed = uCloudSeed
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec2 vCloudXZ;')
+      .replace('#include <common>', '#include <common>\nvarying vec2 vCloudXZ;\nvarying float vEyeDist;')
       .replace(
         '#include <begin_vertex>',
         '#include <begin_vertex>\nvCloudXZ = (modelMatrix * vec4(position, 1.0)).xz;',
       )
+      .replace('#include <project_vertex>', '#include <project_vertex>\nvEyeDist = -mvPosition.z;')
     shader.fragmentShader = shader.fragmentShader
       .replace(
         '#include <common>',
         `#include <common>
         varying vec2 vCloudXZ;
+        varying float vEyeDist;
         uniform float uCloudTime;
         uniform vec2 uCloudWind;
         uniform float uCloudSeed;
@@ -96,7 +98,21 @@ function makeMaterial(world: World): MeshLambertMaterial {
       )
       .replace(
         '#include <fog_fragment>',
-        `gl_FragColor.rgb *= cloudShadow(vCloudXZ, uCloudWind, uCloudTime, uCloudSeed);
+        `{
+          // Ground detail: the vertex colours live 32 m apart, so up close the
+          // terrain reads as airbrushed gradients. Two static noise scales — a
+          // ~40 m mottle and a ~4 m grain — break that up for a few percent of
+          // brightness each. Both fade out with eye distance before their
+          // features go sub-pixel; the sea shook twice to teach that lesson,
+          // and this field never animates at all, so what remains is texture,
+          // not shimmer.
+          float gd1 = csNoise(vCloudXZ * (1.0 / 42.0) + 7.3);
+          float gd2 = csNoise(vCloudXZ * (1.0 / 4.3) + 2.1);
+          float f1 = 1.0 - smoothstep(500.0, 1700.0, vEyeDist);
+          float f2 = 1.0 - smoothstep(150.0, 700.0, vEyeDist);
+          gl_FragColor.rgb *= 1.0 + (gd1 - 0.5) * 0.11 * f1 + (gd2 - 0.5) * 0.07 * f2;
+        }
+        gl_FragColor.rgb *= cloudShadow(vCloudXZ, uCloudWind, uCloudTime, uCloudSeed);
         #include <fog_fragment>`,
       )
   }
@@ -116,7 +132,7 @@ function buildGeometry(world: World): BufferGeometry {
   const c: Rgb = [0, 0, 0]
   const spec = FLORA[world.biome]
   const mask = createForestMask(world.seed)
-  const canopy = forestColour(pal)
+  const canopy = forestColour(pal, world.seed)
   const patchNoise = new Noise2D(mulberry32(world.seed ^ 0x9a7c))
   const veinNoise = new Noise2D(mulberry32(world.seed ^ 0x51a7))
   const snowline = SNOWLINE[world.biome]
@@ -130,6 +146,17 @@ function buildGeometry(world: World): BufferGeometry {
   const sun = world.sunDir
   const warmTint = chroma(pal.sunLight)
   const coolTint = chroma(pal.ambient)
+
+  // The sea biomes earn real beaches; lakes keep their thin margins.
+  const beachScale =
+    world.biome === 'coastal' || world.biome === 'archipelago' ? 1.7 : world.biome === 'mesa' ? 1.2 : 0.8
+  // Wet sand: darker than the dry apron and leaning toward the water — the
+  // strip the surf keeps damp, sitting exactly under the foam band.
+  const wetSand: Rgb = [
+    pal.sand[0] * 0.62 + pal.water[0] * 0.16,
+    pal.sand[1] * 0.62 + pal.water[1] * 0.16,
+    pal.sand[2] * 0.62 + pal.water[2] * 0.16,
+  ]
 
   for (let iz = 0; iz < n; iz++) {
     for (let ix = 0; ix < n; ix++) {
@@ -240,13 +267,17 @@ function buildGeometry(world: World): BufferGeometry {
       if (hf.hasWater) {
         // The shore band above the waterline — sand, shingle, silt or ash by
         // palette. Width wanders with the patch field so the coast is a coast
-        // rather than a contour ring, and steep faces stay rock: a cliff meets
-        // the sea without a beach, which is what makes the ones that have one
-        // read as places you could stand.
-        const beach = range * 0.028 * (0.7 + (patch * 0.5 + 0.5) * 0.9)
+        // rather than a contour ring, widens where the ground shelves gently —
+        // a flat shore becomes a strand, a cliff still meets the sea bare —
+        // and splits into two tones: pale dry sand above, and the darker wet
+        // strip the surf keeps damp right at the waterline.
+        const shelf = 0.6 + 1.8 * (1 - smoothstep(0.08, 0.35, slope))
+        const beach = range * 0.028 * (0.7 + (patch * 0.5 + 0.5) * 0.9) * beachScale * shelf
         const above = (h - hf.waterLevel) / Math.max(beach, 1)
         if (above > 0 && above < 1) {
-          lerp3(c, c, pal.sand, (1 - smoothstep(0.55, 1, above)) * (1 - smoothstep(0.3, 0.8, slope)) * 0.8)
+          const sandMask = (1 - smoothstep(0.55, 1, above)) * (1 - smoothstep(0.3, 0.8, slope))
+          lerp3(c, c, pal.sand, sandMask * 0.8)
+          lerp3(c, c, wetSand, sandMask * (1 - smoothstep(0.08, 0.24, above)) * 0.7)
         }
         // Shallows read as a beach, deeps darken toward the water colour.
         const below = (hf.waterLevel - h) / Math.max(range * 0.12, 1)

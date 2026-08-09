@@ -31,6 +31,8 @@ export interface Heightfield {
   hasWater: boolean
   /** The day's structural modifier. Carried for the tuning panel and for debugging. */
   landform: LandformId
+  /** A rare second modifier — most days 'plain', meaning none. */
+  landform2: LandformId
   /** Whether two noise characters were blended across the map. */
   hybrid: boolean
 }
@@ -72,10 +74,12 @@ export type LandformId =
   | 'dunes'
   /** Stepped contours, the mesa treatment applied somewhere it does not belong. */
   | 'terraces'
-  /** Isolated steep-sided rises off a noise threshold — tables on a mesa day, tors on a field day. */
+  /** Isolated steep-sided rises off a noise threshold — tables on a mesa day, tors on a field day, stacks off a coast. */
   | 'buttes'
   /** One wide U-shaped trough across the map, as if something enormous slid through. */
   | 'glacial'
+  /** A handful of small craters scattered across the map — a meteor-pocked day. */
+  | 'craters'
 
 /**
  * Which modifiers each biome may draw. Restricted by what reads as plausible —
@@ -83,10 +87,12 @@ export type LandformId =
  */
 const LANDFORMS: Record<BiomeId, readonly LandformId[]> = {
   alpine: ['plain', 'rivers', 'caldera', 'escarpment', 'terraces', 'glacial'],
-  mesa: ['plain', 'canyons', 'canyons', 'dunes', 'escarpment', 'buttes'],
-  coastal: ['plain', 'rivers', 'escarpment', 'dunes'],
+  mesa: ['plain', 'canyons', 'canyons', 'dunes', 'escarpment', 'buttes', 'craters'],
+  // Buttes on a coast are sea stacks: the ones that land offshore rise
+  // straight out of the shallows.
+  coastal: ['plain', 'rivers', 'escarpment', 'dunes', 'buttes'],
   valley: ['plain', 'rivers', 'rivers', 'terraces', 'escarpment', 'glacial'],
-  volcanic: ['plain', 'canyons', 'caldera', 'caldera'],
+  volcanic: ['plain', 'canyons', 'caldera', 'caldera', 'craters'],
   field: ['plain', 'rivers', 'rivers', 'escarpment', 'terraces', 'buttes'],
   archipelago: ['plain', 'rivers', 'terraces', 'escarpment'],
 }
@@ -252,6 +258,20 @@ export function generateHeightfield(biome: BiomeId, rng: Rng): Heightfield {
   // --- the day's landform ---------------------------------------------------
   const landform = LANDFORMS[biome][Math.floor(rng() * LANDFORMS[biome].length)]
 
+  // One day in four draws a second landform, so "rivers and buttes" and
+  // "escarpment and craters" are days that exist — the variety of the
+  // landform list, squared, for a handful of lines. The one forbidden pair
+  // is two carvers: rivers and canyons share the same ridge field, and
+  // carving it twice cuts channels deep enough to glide down for free —
+  // the exact ramp the carve depths were tuned to prevent.
+  const isCarver = (l: LandformId) => l === 'rivers' || l === 'canyons'
+  const secondRoll = rng()
+  const secondPick = LANDFORMS[biome][Math.floor(rng() * LANDFORMS[biome].length)]
+  const landform2: LandformId =
+    secondRoll < 0.25 && secondPick !== landform && !(isCarver(secondPick) && isCarver(landform))
+      ? secondPick
+      : 'plain'
+
   // River channels stay shallow. They are drainage, not a route: cut deep enough and
   // a glide can follow one downhill for kilometres without ever working for it.
   const carveDepth = landform === 'canyons' ? randRange(rng, 0.22, 0.36) : randRange(rng, 0.09, 0.16)
@@ -302,8 +322,86 @@ export function generateHeightfield(biome: BiomeId, rng: Rng): Heightfield {
   const duneAmp = randRange(rng, 0.025, 0.05)
   const duneOpts: FbmOptions = { octaves: 2, frequency: 1 / 2600, lacunarity: 2, gain: 0.5 }
 
-  if (landform === 'terraces' && shape.terrace === 0) {
+  // The crater field: a handful of small ones instead of one caldera. Each is
+  // the caldera's own math at a quarter the size, so each stays a local
+  // feature — the ramp law is about any single bowl's diameter, not how many
+  // there are.
+  const CRATERS = 4
+  const craterX: number[] = []
+  const craterZ: number[] = []
+  const craterR: number[] = []
+  const craterDeep: number[] = []
+  const craterRim: number[] = []
+  for (let i = 0; i < CRATERS; i++) {
+    craterX.push(randRange(rng, -HALF_WORLD * 0.7, HALF_WORLD * 0.7))
+    craterZ.push(randRange(rng, -HALF_WORLD * 0.7, HALF_WORLD * 0.7))
+    craterR.push(randRange(rng, 260, 560))
+    craterDeep.push(randRange(rng, 0.05, 0.1))
+    craterRim.push(randRange(rng, 0.04, 0.09))
+  }
+
+  if ((landform === 'terraces' || landform2 === 'terraces') && shape.terrace === 0) {
     shape.terrace = Math.round(randRange(rng, 4, 9))
+  }
+
+  // One landform's contribution to the normalised height at a point. Pulled
+  // out of the vertex loop so a second landform can apply the same way.
+  const applyLandform = (
+    l: LandformId,
+    t: number,
+    x: number,
+    z: number,
+    wx: number,
+    wz: number,
+    px: number,
+    pz: number,
+  ): number => {
+    switch (l) {
+      case 'rivers':
+      case 'canyons': {
+        // 1 - |noise| ridges along the field's zero crossings, which is a
+        // branching network rather than a set of parallel gouges. Sampled at the
+        // warped coordinates so the channels meander with everything else.
+        const ridge = 1 - Math.abs(fbm(feature, px, pz, carveOpts))
+        return t - smoothstep(l === 'canyons' ? 0.9 : carveEdge, 1, ridge) * carveDepth
+      }
+      case 'caldera': {
+        const d = Math.hypot(x - calderaX, z - calderaZ) / calderaR
+        // Rim first, then the floor drops out from under it. The gaussian rim is
+        // what stops it reading as a dent and starts it reading as a crater.
+        const rim = Math.exp(-(((d - 1) * 2.4) ** 2)) * calderaRim
+        return t + rim - (1 - smoothstep(0.72, 1, d)) * calderaDepth
+      }
+      case 'escarpment': {
+        // A straight fault, made crooked by a noise term, with a step across it.
+        // Centred on zero so the map's overall height is unchanged and the launch
+        // scorer is not handed a free 200 m on one side.
+        const s = (x * faultX + z * faultZ) / HALF_WORLD + fbm(feature, wx, wz, faultOpts) * 0.45 + faultOffset
+        return t + smoothstep(-0.05, 0.05, s) * faultStep - faultStep * 0.5
+      }
+      case 'dunes': {
+        const u = x * duneX + z * duneZ
+        return t + Math.sin(u * duneFreq + fbm(feature, wx, wz, duneOpts) * 3.2) * duneAmp
+      }
+      case 'buttes': {
+        const f = fbm(feature, px, pz, butteOpts)
+        return t + smoothstep(butteEdge, butteEdge + 0.09, f) * butteHeight
+      }
+      case 'glacial': {
+        const s = (x * faultX + z * faultZ) / HALF_WORLD + fbm(feature, wx, wz, faultOpts) * 0.3 + faultOffset
+        return t - Math.exp(-((s / troughWidth) ** 2)) * troughDepth
+      }
+      case 'craters': {
+        for (let ci = 0; ci < CRATERS; ci++) {
+          const d = Math.hypot(x - craterX[ci], z - craterZ[ci]) / craterR[ci]
+          if (d > 2.2) continue
+          t += Math.exp(-(((d - 1) * 2.6) ** 2)) * craterRim[ci] - (1 - smoothstep(0.6, 1, d)) * craterDeep[ci]
+        }
+        return t
+      }
+      default:
+        return t
+    }
   }
 
   const seg = TERRAIN_SEG
@@ -340,48 +438,8 @@ export function generateHeightfield(biome: BiomeId, rng: Rng): Heightfield {
       let t = clamp01(h * 0.5 + 0.5)
       t = Math.pow(t, shape.curve)
 
-      switch (landform) {
-        case 'rivers':
-        case 'canyons': {
-          // 1 - |noise| ridges along the field's zero crossings, which is a
-          // branching network rather than a set of parallel gouges. Sampled at the
-          // warped coordinates so the channels meander with everything else.
-          const ridge = 1 - Math.abs(fbm(feature, px, pz, carveOpts))
-          t -= smoothstep(carveEdge, 1, ridge) * carveDepth
-          break
-        }
-        case 'caldera': {
-          const d = Math.hypot(x - calderaX, z - calderaZ) / calderaR
-          // Rim first, then the floor drops out from under it. The gaussian rim is
-          // what stops it reading as a dent and starts it reading as a crater.
-          const rim = Math.exp(-(((d - 1) * 2.4) ** 2)) * calderaRim
-          t += rim - (1 - smoothstep(0.72, 1, d)) * calderaDepth
-          break
-        }
-        case 'escarpment': {
-          // A straight fault, made crooked by a noise term, with a step across it.
-          // Centred on zero so the map's overall height is unchanged and the launch
-          // scorer is not handed a free 200 m on one side.
-          const s = (x * faultX + z * faultZ) / HALF_WORLD + fbm(feature, wx, wz, faultOpts) * 0.45 + faultOffset
-          t += smoothstep(-0.05, 0.05, s) * faultStep - faultStep * 0.5
-          break
-        }
-        case 'dunes': {
-          const u = x * duneX + z * duneZ
-          t += Math.sin(u * duneFreq + fbm(feature, wx, wz, duneOpts) * 3.2) * duneAmp
-          break
-        }
-        case 'buttes': {
-          const f = fbm(feature, px, pz, butteOpts)
-          t += smoothstep(butteEdge, butteEdge + 0.09, f) * butteHeight
-          break
-        }
-        case 'glacial': {
-          const s = (x * faultX + z * faultZ) / HALF_WORLD + fbm(feature, wx, wz, faultOpts) * 0.3 + faultOffset
-          t -= Math.exp(-((s / troughWidth) ** 2)) * troughDepth
-          break
-        }
-      }
+      t = applyLandform(landform, t, x, z, wx, wz, px, pz)
+      if (landform2 !== 'plain') t = applyLandform(landform2, t, x, z, wx, wz, px, pz)
       t = clamp01(t)
 
       if (shape.islands) {
@@ -414,7 +472,7 @@ export function generateHeightfield(biome: BiomeId, rng: Rng): Heightfield {
   const hasWater = shape.waterFrac > 0
   const waterLevel = hasWater ? min + (max - min) * shape.waterFrac : min - 1
 
-  return { size: WORLD_SIZE, seg, cell, data, min, max, waterLevel, hasWater, landform, hybrid }
+  return { size: WORLD_SIZE, seg, cell, data, min, max, waterLevel, hasWater, landform, landform2, hybrid }
 }
 
 function sampleKind(kind: NoiseKind, n: Noise2D, x: number, z: number, o: FbmOptions): number {

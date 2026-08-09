@@ -118,6 +118,7 @@ export function TuningPanel({ day, onDay, world }: { day: number; onDay: (d: num
         <label>world</label>
         <span className="worldInfo">
           {world.palette.mood} {world.biome} · {world.heightfield.landform}
+          {world.heightfield.landform2 !== 'plain' ? `+${world.heightfield.landform2}` : ''}
           {world.heightfield.hybrid ? ' · hybrid' : ''}
         </span>
       </div>

@@ -47,7 +47,7 @@ export const FLORA: Record<BiomeId, FloraSpec> = {
 
 /* -------------------------------------------------------------- understory ---- */
 
-export type DetailKind = 'boulder' | 'cactus' | 'palm' | 'shrub' | 'spire' | 'bale'
+export type DetailKind = 'boulder' | 'cactus' | 'palm' | 'shrub' | 'spire' | 'bale' | 'reed' | 'tuft'
 
 /**
  * The second thing that grows — or in half the biomes, does not grow at all.
@@ -92,6 +92,49 @@ export const DETAIL: Record<BiomeId, DetailSpec> = {
   field: { kind: 'bale', density: 6, slope: [0, 0.22], band: [0.03, 0.85], height: [2.4, 3.4], inForest: 0, shore: 0 },
   // Palms right down the beach, in the band the forest mask is told to avoid.
   archipelago: { kind: 'palm', density: 9, slope: [0, 0.36], band: [0, 0.4], height: [10, 18], inForest: 1, shore: 95 },
+}
+
+/**
+ * The second understory, where a biome has one. Water-edge species mostly:
+ * reeds ringing the lakes and ponds, dry grass tufts on the beaches the wide
+ * sand aprons opened up. One more instanced draw call on the biomes that use
+ * it, nothing anywhere else. Oversized like the hay bales, for the same
+ * reason: true-scale reeds vanish from a glider.
+ */
+export const DETAIL2: Record<BiomeId, DetailSpec | null> = {
+  alpine: null,
+  mesa: null,
+  coastal: { kind: 'tuft', density: 8, slope: [0, 0.45], band: [0, 1], height: [0.9, 1.6], inForest: 0.4, shore: 55 },
+  valley: { kind: 'reed', density: 7, slope: [0, 0.3], band: [0, 1], height: [1.6, 2.8], inForest: 1, shore: 14 },
+  volcanic: null,
+  field: { kind: 'reed', density: 7, slope: [0, 0.3], band: [0, 1], height: [1.6, 2.8], inForest: 1, shore: 14 },
+  archipelago: { kind: 'tuft', density: 8, slope: [0, 0.45], band: [0, 1], height: [0.9, 1.6], inForest: 0.4, shore: 55 },
+}
+
+/**
+ * The day's forest character. Every wood used to be the same wood resampled:
+ * FLORA's numbers are constants, so two valley days differed only in where the
+ * mask fell. Now each day draws its own tree height and girth, leans the
+ * species ratio one way or the other, and — rarely — has a season: a blossom
+ * day turns the broadleaf canopy toward the bloom colour, an autumn day toward
+ * the sun's gold. Terrain paints its forest tint through the same helper, so
+ * the woods and the ground they stand on turn together.
+ */
+export interface ForestDay {
+  height: number
+  width: number
+  broadleafShift: number
+  season: 'blossom' | 'autumn' | null
+}
+
+export function forestDay(seed: number): ForestDay {
+  const r = mulberry32(seed ^ 0x0f0e57)
+  const height = 0.85 + r() * 0.35
+  const width = 0.9 + r() * 0.25
+  const broadleafShift = (r() - 0.5) * 0.36
+  const roll = r()
+  const season = roll < 0.08 ? 'blossom' : roll < 0.17 ? 'autumn' : null
+  return { height, width, broadleafShift, season }
 }
 
 /* --------------------------------------------------------- the forest mask ---- */
@@ -147,8 +190,13 @@ export function forestAmount(
  * `low` is forest floor, on tropical days it is beach sand — so deriving canopy from
  * a fixed band gave the archipelago sand-coloured woodland.
  */
-export const forestColour = (pal: Palette): Rgb => {
+export const forestColour = (pal: Palette, seed: number): Rgb => {
   const greenness = (c: Rgb) => c[1] - (c[0] + c[2]) * 0.5
-  const base = greenness(pal.mid) >= greenness(pal.low) ? pal.mid : pal.low
+  let base = greenness(pal.mid) >= greenness(pal.low) ? pal.mid : pal.low
+  const season = forestDay(seed).season
+  if (season) {
+    const to = season === 'blossom' ? pal.bloom : pal.sun
+    base = [base[0] + (to[0] - base[0]) * 0.45, base[1] + (to[1] - base[1]) * 0.45, base[2] + (to[2] - base[2]) * 0.45]
+  }
   return [base[0] * 0.55, base[1] * 0.68, base[2] * 0.48]
 }

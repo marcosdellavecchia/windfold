@@ -607,6 +607,37 @@ distance regardless of its own colour. The wake and the ghost trails both now
 opt out. When the ghost bundle lands, the ribbon geometry is on the shelf if the
 score-band trails want more presence than a line.
 
+**The terrain finale.** Four strands, one aim: ground that rewards being looked at.
+
+Per-pixel ground detail, at last: the vertex colours live 32 m apart, so up close
+the terrain read as airbrushed gradients. Two static noise scales — a ~40 m mottle
+and a ~4 m grain, a few percent each — now break that up in the terrain's fragment
+shader, each fading out before its features go sub-pixel. The sea shook twice to
+teach that discipline; this field never animates at all, so what remains is
+texture, not shimmer.
+
+Beaches earned their keep: width scales by biome (the sea biomes get real strands,
+alpine lakes keep their shingle), broadens where the ground shelves gently and
+stays narrow under cliffs, and splits into two tones — pale dry sand above a
+darker wet strip that sits exactly under the surf's foam band.
+
+The landform list grew and then multiplied. `craters` scatters a handful of small
+bowls — a meteor-pocked day — and `buttes` joined the coastal list, where the ones
+that land offshore rise out of the shallows as sea stacks. Then the multiplier:
+one day in four draws a *second* landform, so "rivers and buttes" and "caldera and
+craters" are days that exist — the list's variety, squared, for a dozen lines. The
+one forbidden pair is two carvers: rivers and canyons share the same ridge field,
+and carving it twice cuts channels deep enough to glide down for free. The harness
+re-blessed the distribution: no free rides, the hard tail intact.
+
+And the woods got their own days. Each day draws tree height, girth and species
+lean, so two valley days grow different forests instead of resampling one; a
+second understory slot puts reeds around the lakes and ponds and dry grass tufts
+on the new beaches; and roughly one day in six has a season — blossom turning the
+broadleaf canopy toward the bloom colour, autumn toward the sun's gold — applied
+through the same helper the terrain paints its forest tint with, so the trees and
+the wooded ground under them turn together.
+
 **Music.** Synthesised in the browser, not streamed — same reasoning as the terrain.
 Rule 5 forbids third-party requests and the load budget is three seconds; a few minutes
 of ambient piano is a megabyte and a round trip, whereas this is a few kilobytes of code

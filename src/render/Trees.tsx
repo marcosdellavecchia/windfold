@@ -15,7 +15,16 @@ import {
   Vector3,
 } from 'three'
 import type { World } from '../sim/world'
-import { DETAIL, FLORA, createForestMask, forestAmount, type DetailKind } from '../sim/flora'
+import {
+  DETAIL,
+  DETAIL2,
+  FLORA,
+  createForestMask,
+  forestAmount,
+  forestDay,
+  type DetailKind,
+  type ForestDay,
+} from '../sim/flora'
 import type { Noise2D } from '../sim/noise'
 import { mulberry32 } from '../sim/rng'
 import { sampleGradient, sampleHeight, smoothstep, clamp01 } from '../sim/terrain'
@@ -39,6 +48,8 @@ const REDRAW_AT = CELL * 0.6
 const MAX_PER_SPECIES = 3000
 /** The understory is sparser than the forest and cheaper to lose. */
 const MAX_DETAIL = 1400
+/** The water-edge species live on narrow ribbons; they never need many. */
+const MAX_DETAIL2 = 900
 
 /**
  * Trees, streamed around the camera.
@@ -64,15 +75,24 @@ export function Trees({ world }: { world: World }) {
     const conifer = coniferGeometry(trunkTint)
     const broadleaf = broadleafGeometry(trunkTint)
     const detailKind = DETAIL[world.biome].kind
+    const spec2 = DETAIL2[world.biome]
+    const day = forestDay(world.seed)
 
     // Canopy colours come off the day's own palette so the forest belongs to the
     // landscape instead of sitting on top of it as generic green.
-    const canopy: Rgb[] = [
+    let canopy: Rgb[] = [
       scale(pal.low, 0.72),
       scale(pal.low, 0.9),
       scale(pal.mid, 0.8),
       mix(pal.low, pal.mid, 0.5),
     ]
+    // On a season day the whole canopy turns — the same shift forestColour
+    // applies to the terrain's forest tint, so the trees never disagree with
+    // the wooded ground under them.
+    if (day.season) {
+      const to = day.season === 'blossom' ? pal.bloom : pal.sun
+      canopy = canopy.map((c) => mix(c, to, 0.45))
+    }
     const accent = mix(pal.sun, pal.low, 0.55)
 
     const make = (geo: BufferGeometry, cap: number) => {
@@ -89,8 +109,11 @@ export function Trees({ world }: { world: World }) {
       broadleafMesh: make(broadleaf, MAX_PER_SPECIES),
       detailMesh: make(detailGeometry(detailKind, trunkTint), MAX_DETAIL),
       detailPalette: detailColours(detailKind, pal),
+      detail2Mesh: spec2 ? make(detailGeometry(spec2.kind, trunkTint), MAX_DETAIL2) : null,
+      detail2Palette: spec2 ? detailColours(spec2.kind, pal) : [],
       canopy,
       accent,
+      day,
       // Shared with the terrain's own forest tint, so trees only ever stand on
       // ground that already looks wooded.
       mask: createForestMask(world.seed),
@@ -111,6 +134,7 @@ export function Trees({ world }: { world: World }) {
       <primitive object={built.coniferMesh} />
       <primitive object={built.broadleafMesh} />
       <primitive object={built.detailMesh} />
+      {built.detail2Mesh && <primitive object={built.detail2Mesh} />}
     </>
   )
 }
@@ -120,8 +144,11 @@ interface Built {
   broadleafMesh: InstancedMesh
   detailMesh: InstancedMesh
   detailPalette: Rgb[]
+  detail2Mesh: InstancedMesh | null
+  detail2Palette: Rgb[]
   canopy: Rgb[]
   accent: Rgb
+  day: ForestDay
   mask: Noise2D
 }
 
@@ -137,6 +164,11 @@ function scatter(world: World, built: Built, cx: number, cz: number) {
   const hf = world.heightfield
   const spec = FLORA[world.biome]
   const detail = DETAIL[world.biome]
+  const detail2 = DETAIL2[world.biome]
+  const day = built.day
+  // The day leans the species ratio: some valley days are nearly all
+  // broadleaf, some are conifer country.
+  const dayBroadleaf = Math.min(0.95, Math.max(0.05, spec.broadleaf + day.broadleafShift))
   const range = Math.max(hf.max - hf.min, 1)
   const treelineY = hf.min + range * spec.treeline
   const floorY = hf.min + range * spec.floor // cheap pre-filter before forestAmount
@@ -151,6 +183,7 @@ function scatter(world: World, built: Built, cx: number, cz: number) {
   let nConifer = 0
   let nBroadleaf = 0
   let nDetail = 0
+  let nDetail2 = 0
 
   for (let ciz = cell0z; ciz <= cell1z; ciz++) {
     for (let cix = cell0x; cix <= cell1x; cix++) {
@@ -183,7 +216,7 @@ function scatter(world: World, built: Built, cx: number, cz: number) {
 
         if (maskRoll > forestAmount(built.mask, spec, hf, h, slope, x, z)) continue
 
-        const broad = speciesRoll < spec.broadleaf
+        const broad = speciesRoll < dayBroadleaf
         const mesh = broad ? built.broadleafMesh : built.coniferMesh
         const index = broad ? nBroadleaf : nConifer
         if (index >= MAX_PER_SPECIES) continue
@@ -192,8 +225,8 @@ function scatter(world: World, built: Built, cx: number, cz: number) {
         const edge = 1 - smoothstep(RADIUS * 0.8, RADIUS, Math.sqrt(d2))
         if (edge <= 0.02) continue
 
-        const height = (spec.height[0] + sizeRoll * (spec.height[1] - spec.height[0])) * edge
-        const width = height * (broad ? 0.62 : 0.44) * (0.85 + colourRoll * 0.3)
+        const height = (spec.height[0] + sizeRoll * (spec.height[1] - spec.height[0])) * edge * day.height
+        const width = height * (broad ? 0.62 : 0.44) * (0.85 + colourRoll * 0.3) * day.width
 
         POS.set(x, h, z)
         QUAT.setFromAxisAngle(UP, rot)
@@ -265,6 +298,55 @@ function scatter(world: World, built: Built, cx: number, cz: number) {
         built.detailMesh.setColorAt(nDetail, COLOR)
         nDetail++
       }
+
+      // The water-edge species, off the same cell stream again, so the whole
+      // cell stays one deterministic sequence.
+      if (detail2 && built.detail2Mesh) {
+        for (let k = 0; k < detail2.density; k++) {
+          const x = (cix + rng()) * CELL
+          const z = (ciz + rng()) * CELL
+          const rot = rng() * Math.PI * 2
+          const sizeRoll = rng()
+          const tintRoll = rng()
+          const forestRoll = rng()
+
+          const dx = x - cx
+          const dz = z - cz
+          const d2 = dx * dx + dz * dz
+          if (d2 > r2 || nDetail2 >= MAX_DETAIL2) continue
+
+          const h = sampleHeight(hf, x, z)
+          if (h < waterY) continue
+          if (detail2.shore > 0 && (!hf.hasWater || h > hf.waterLevel + detail2.shore)) continue
+
+          sampleGradient(hf, x, z, GRAD)
+          const slope = Math.hypot(GRAD.x, GRAD.z)
+          if (slope < detail2.slope[0] || slope > detail2.slope[1]) continue
+
+          if (detail2.inForest < 1) {
+            const cover = forestAmount(built.mask, spec, hf, h, slope, x, z)
+            if (cover > 0 && forestRoll > detail2.inForest) continue
+          }
+
+          const edge = 1 - smoothstep(RADIUS * 0.8, RADIUS, Math.sqrt(d2))
+          if (edge <= 0.02) continue
+
+          const height = (detail2.height[0] + sizeRoll * (detail2.height[1] - detail2.height[0])) * edge
+          const width = height * (0.7 + tintRoll * 0.3)
+
+          POS.set(x, h, z)
+          QUAT.setFromAxisAngle(UP, rot)
+          SCALE.set(width, height, width)
+          MATRIX.compose(POS, QUAT, SCALE)
+          built.detail2Mesh.setMatrixAt(nDetail2, MATRIX)
+
+          const base = built.detail2Palette[Math.floor(tintRoll * built.detail2Palette.length) % built.detail2Palette.length]
+          const v = 0.84 + sizeRoll * 0.3
+          COLOR.setRGB(clamp01(base[0] * v), clamp01(base[1] * v), clamp01(base[2] * v))
+          built.detail2Mesh.setColorAt(nDetail2, COLOR)
+          nDetail2++
+        }
+      }
     }
   }
 
@@ -277,6 +359,11 @@ function scatter(world: World, built: Built, cx: number, cz: number) {
   if (built.coniferMesh.instanceColor) built.coniferMesh.instanceColor.needsUpdate = true
   if (built.broadleafMesh.instanceColor) built.broadleafMesh.instanceColor.needsUpdate = true
   if (built.detailMesh.instanceColor) built.detailMesh.instanceColor.needsUpdate = true
+  if (built.detail2Mesh) {
+    built.detail2Mesh.count = nDetail2
+    built.detail2Mesh.instanceMatrix.needsUpdate = true
+    if (built.detail2Mesh.instanceColor) built.detail2Mesh.instanceColor.needsUpdate = true
+  }
 }
 
 /** Cheap 2D integer hash. Distinct cells must not share a stream. */
@@ -391,6 +478,32 @@ function detailGeometry(kind: DetailKind, trunkTint: number): BufferGeometry {
         { geo: cap(-0.45), tint: 0.68 },
       ])
     }
+    case 'reed': {
+      // A clump of leaning stalks with dark seed heads — cattails. The heads
+      // are what read as reeds instead of thin grass at any distance.
+      const stalk = (x: number, z: number, lean: number, h: number, tint: number) => [
+        { geo: translated(rotatedZ(new CylinderGeometry(0.035, 0.05, h, 4), lean), x, h * 0.5, z), tint },
+        { geo: translated(rotatedZ(new CylinderGeometry(0.06, 0.06, 0.16, 4), lean), x - lean * h * 0.55, h, z), tint: 0.42 },
+      ]
+      return merge([
+        ...stalk(-0.14, 0.06, 0.1, 0.86, 1.0),
+        ...stalk(0.1, -0.08, -0.12, 1.0, 0.9),
+        ...stalk(0.03, 0.12, 0.05, 0.72, 0.82),
+      ])
+    }
+    case 'tuft': {
+      // Beach grass: a splay of flattened blades from one root, no trunk.
+      const parts: Array<{ geo: BufferGeometry; tint: number }> = []
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2 + 0.4
+        const blade = scaled(new ConeGeometry(0.07, 0.9, 4), 1, 1, 0.3)
+        parts.push({
+          geo: translated(rotatedY(rotatedZ(blade, 0.55), a), Math.cos(a) * 0.16, 0.38, Math.sin(a) * 0.16),
+          tint: i % 2 === 0 ? 1.0 : 0.8,
+        })
+      }
+      return merge(parts)
+    }
   }
 }
 
@@ -414,6 +527,11 @@ function detailColours(kind: DetailKind, pal: Palette): Rgb[] {
     case 'bale':
       // Cut hay is the sun's colour, not the grass's — a bale is dried light.
       return [mix(pal.sun, pal.mid, 0.4), mix(pal.sun, pal.mid, 0.58), scale(mix(pal.sun, pal.mid, 0.45), 0.86)]
+    case 'reed':
+      return [mix(pal.low, pal.mid, 0.5), scale(pal.mid, 0.78), mix(pal.mid, pal.rock, 0.25)]
+    case 'tuft':
+      // Dry standing grass on sand: pale, closer to the beach than the field.
+      return [mix(pal.sand, pal.mid, 0.45), mix(pal.sand, pal.high, 0.4), scale(pal.sand, 0.88)]
   }
 }
 
