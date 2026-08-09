@@ -1,5 +1,5 @@
 import { Noise2D, fbm, ridged, billow, type FbmOptions } from './noise'
-import { randRange, type Rng } from './rng'
+import { mulberry32, randRange, type Rng } from './rng'
 import type { BiomeId } from './palette'
 
 /**
@@ -413,6 +413,89 @@ export function generateHeightfield(biome: BiomeId, rng: Rng): Heightfield {
   const ox = rng() * 20000 - 10000
   const oz = rng() * 20000 - 10000
 
+  // --- the day's accidents ---------------------------------------------------
+  //
+  // Between the 32 m cells and the kilometre-scale landforms there was nothing.
+  // The finest noise octave has to stay above ~64 m or it turns into vertex
+  // spikes, and every landform is sized in kilometres because that is what a
+  // landform is — so the whole hundred-to-four-hundred-metre band, which is the
+  // scale at which real ground is *incidental*, was empty. Terrain came out
+  // shaped but featureless: nowhere in particular to aim for, nothing to notice
+  // on the way past.
+  //
+  // These are that band. A knoll to clear, a hollow you only see once you are
+  // over its lip, a notch cut through a ridge that turns it into a pass, a spur
+  // running off a shoulder. Every one is a couple of lines of arithmetic and
+  // none of them needs its own pass over the field.
+  //
+  // Drawn after `ox`/`oz` on purpose: everything above this line has already
+  // taken its numbers from the stream, so adding these leaves the base terrain of
+  // every existing day exactly where it was and lays the accidents on top.
+  //
+  // Sizes obey the ramp law the same way the craters do. The rule is about any
+  // single feature's diameter, not how many there are: at 380 m across and 7.5%
+  // of the height range, the steepest thing here is far short of a glide slope,
+  // so it is something to fly over rather than something to ride down. Rises and
+  // dips are drawn with equal probability, which keeps the map's mean height
+  // where the noise put it.
+  // Their own stream, seeded by exactly one draw from the main one.
+  //
+  // This is not tidiness. `generateAir` and `findLaunchSite` both run after this
+  // function and share its generator, so drawing a variable number of values here
+  // would move every thermal and every launch site on the map — and then any
+  // measurement of "with features against without" is really measuring a reshuffled
+  // sky. One fixed draw means the count and the sizes below can be tuned, or
+  // switched off outright, with the rest of the day held still.
+  const featRng = mulberry32((rng() * 0xffffffff) >>> 0)
+  const FEATURES = Math.round(randRange(featRng, 16, 26))
+  const featX = new Float32Array(FEATURES)
+  const featZ = new Float32Array(FEATURES)
+  const featAmp = new Float32Array(FEATURES)
+  const featR = new Float32Array(FEATURES)
+  const featLong = new Float32Array(FEATURES)
+  const featCos = new Float32Array(FEATURES)
+  const featSin = new Float32Array(FEATURES)
+  const featReach = new Float32Array(FEATURES)
+  for (let i = 0; i < FEATURES; i++) {
+    // Round ones are knolls and hollows; drawn-out ones are spurs and notches.
+    const round = featRng() < 0.5
+    const rise = featRng() < 0.5
+    const r = randRange(featRng, 90, 380)
+    const long = round ? 1 : randRange(featRng, 2.4, 4.8)
+    const ang = featRng() * Math.PI * 2
+    featX[i] = randRange(featRng, -HALF_WORLD * 0.85, HALF_WORLD * 0.85)
+    featZ[i] = randRange(featRng, -HALF_WORLD * 0.85, HALF_WORLD * 0.85)
+    featR[i] = r
+    featLong[i] = long
+    featAmp[i] = randRange(featRng, 0.03, round ? 0.075 : 0.06) * (rise ? 1 : -1)
+    featCos[i] = Math.cos(ang)
+    featSin[i] = Math.sin(ang)
+    // Where the gaussian has faded to under half a percent, so the box test
+    // below can reject without evaluating anything.
+    featReach[i] = r * long * 1.6
+  }
+
+  /**
+   * Every accident that reaches this point, summed. Runs 147k times, so the
+   * rejection is two compares against a box before any multiplying happens —
+   * at these sizes all but a handful of features miss any given vertex.
+   */
+  const applyFeatures = (t: number, fx: number, fz: number): number => {
+    for (let i = 0; i < FEATURES; i++) {
+      const reach = featReach[i]
+      const dx = fx - featX[i]
+      if (dx < -reach || dx > reach) continue
+      const dz = fz - featZ[i]
+      if (dz < -reach || dz > reach) continue
+      const u = (dx * featCos[i] + dz * featSin[i]) / (featR[i] * featLong[i])
+      const v = (-dx * featSin[i] + dz * featCos[i]) / featR[i]
+      const q = u * u + v * v
+      if (q > 2.6) continue
+      t += featAmp[i] * Math.exp(-q * 2.2)
+    }
+    return t
+  }
+
   for (let iz = 0; iz < n; iz++) {
     const z = -HALF_WORLD + iz * cell
     for (let ix = 0; ix < n; ix++) {
@@ -437,6 +520,13 @@ export function generateHeightfield(biome: BiomeId, rng: Rng): Heightfield {
 
       t = applyLandform(landform, t, x, z, wx, wz, px, pz)
       if (landform2 !== 'plain') t = applyLandform(landform2, t, x, z, wx, wz, px, pz)
+      // Accidents on top of the day's structure, sampled at a third of the domain
+      // warp. Analytic gaussians are perfect ellipses and read as dropped-in
+      // pottery; the warp is already computed, so borrowing a fraction of it
+      // costs nothing and pulls every one of them out of true. A third rather
+      // than all of it — at full strength the warp is wider than the features and
+      // tears them apart instead of bending them.
+      t = applyFeatures(t, x + (px - wx) * 0.35, z + (pz - wz) * 0.35)
       t = clamp01(t)
 
       if (shape.islands) {
