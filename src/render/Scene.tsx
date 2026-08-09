@@ -39,6 +39,7 @@ export function Scene({
   par,
   onWorldReady,
   rests,
+  onFlightRested,
 }: {
   world: World
   par: number
@@ -46,6 +47,8 @@ export function Scene({
   onWorldReady?: () => void
   /** Where other players' flights came to rest, from the presence layer. */
   rests?: RestPoint[] | null
+  /** Reports this player's finished flight so it joins the drift at once. */
+  onFlightRested?: (rest: RestPoint, distance: number) => void
 }) {
   const planeRef = useRef<Group>(null)
   const trail = useMemo(() => new Trail([0.55, 0.9, 1.0]), [])
@@ -81,7 +84,14 @@ export function Scene({
       <primitive object={trail.object} />
       <PaperPlane ref={planeRef} world={world} />
 
-      <Simulation world={world} par={par} planeRef={planeRef} trail={trail} onWorldReady={onWorldReady} />
+      <Simulation
+        world={world}
+        par={par}
+        planeRef={planeRef}
+        trail={trail}
+        onWorldReady={onWorldReady}
+        onFlightRested={onFlightRested}
+      />
     </>
   )
 }
@@ -92,12 +102,13 @@ interface SimProps {
   planeRef: React.RefObject<Group | null>
   trail: Trail
   onWorldReady?: () => void
+  onFlightRested?: (rest: RestPoint, distance: number) => void
 }
 
 /** How many previous attempts stay on screen, besides the best. */
 const GHOST_ATTEMPTS = 5
 
-function Simulation({ world, par, planeRef, trail, onWorldReady }: SimProps) {
+function Simulation({ world, par, planeRef, trail, onWorldReady, onFlightRested }: SimProps) {
   const camera = useThree((s) => s.camera)
 
   const flight = useMemo(
@@ -224,8 +235,11 @@ function Simulation({ world, par, planeRef, trail, onWorldReady }: SimProps) {
         if (isBest) stats.current.best = d
         noteFlight(saved, world.day, d, par, flight.landed, flight.path)
         // The flight joins the world's presence: a resting point and its
-        // metres, anonymously. Fire-and-forget — the game never waits on it.
+        // metres, anonymously. Fire-and-forget — the game never waits on it —
+        // and optimistically, so your own paper is lying there on the next
+        // attempt instead of after a reload.
         postFlight(world.day, flight.pos.x, flight.pos.z, d, flight.landed)
+        onFlightRested?.({ x: flight.pos.x, z: flight.pos.z, landed: flight.landed }, d)
         writeHud({ newBest: isBest, lastDistance: d, landed: flight.landed })
         // Keep the flight's path as a ghost. `reset()` replaces the array rather
         // than clearing it, so holding the reference is safe. The best is held

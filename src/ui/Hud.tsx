@@ -6,6 +6,10 @@ import { copyCard, shareCard } from '../game/share'
 
 const metres = (v: number) => Math.round(v).toLocaleString('en-US')
 
+/** Under 10 km keep a decimal, above it round — "2.4 km", then "124 km". */
+const kmFlown = (m: number) =>
+  m < 10000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m / 1000).toLocaleString('en-US')} km`
+
 export function Hud({ world, par, metresFlown }: { world: World; par: number; metresFlown: number }) {
   const s = useHud()
 
@@ -39,10 +43,10 @@ export function Hud({ world, par, metresFlown }: { world: World; par: number; me
           </div>
           {/* The world's completable goal: beat the paper pilot and the day is won. */}
           <div className="par">par {metres(par)} m</div>
-          {/* The presence layer's one number: everyone's flying, pooled. */}
-          {metresFlown >= 1000 && (
-            <div className="others">{Math.round(metresFlown / 1000).toLocaleString('en-US')} km flown here</div>
-          )}
+          {/* The presence layer's one number: everyone's flying, pooled. Shown
+              from the very first flight — hiding a small number told the first
+              pilots on a world that their flying didn't count. */}
+          {metresFlown >= 100 && <div className="others">{kmFlown(metresFlown)} flown here</div>}
           <div className="hint">Move to steer · click or space to launch</div>
           {/* Dev affordances, worth surfacing while the game is being tested. */}
           <div className="keys">R for another world · T for tuning</div>

@@ -39,7 +39,19 @@ function WorldVeil({ phase, onDone }: { phase: 'in' | 'out'; onDone: () => void 
 import { Canvas } from '@react-three/fiber'
 import { buildWorld, dayNumber } from './sim/world'
 import { computePar } from './sim/par'
-import { fetchPresence, type Presence } from './game/net'
+import { fetchPresence, type Presence, type RestPoint } from './game/net'
+
+/**
+ * The server's view arriving after local flights have already been merged in:
+ * keep whichever metre count is larger (the server may not have caught up)
+ * and union the rest points, capped like the renderer is.
+ */
+function mergePresence(local: Presence, server: Presence): Presence {
+  return {
+    metres: Math.max(local.metres, server.metres),
+    rests: [...server.rests, ...local.rests].slice(0, 500),
+  }
+}
 import { Scene } from './render/Scene'
 import { Hud } from './ui/Hud'
 import { TuningPanel } from './ui/TuningPanel'
@@ -72,12 +84,21 @@ export default function App() {
     let alive = true
     setPresence(null)
     void fetchPresence(day).then((p) => {
-      if (alive) setPresence(p)
+      if (alive && p) setPresence((cur) => (cur ? mergePresence(cur, p) : p))
     })
     return () => {
       alive = false
     }
   }, [day])
+
+  // Your own flight joins the drift immediately — waiting for a reload plus
+  // the edge cache taught the first pilots on a world that nothing happened.
+  const onFlightRested = useCallback((rest: RestPoint, distance: number) => {
+    setPresence((p) => ({
+      metres: (p?.metres ?? 0) + distance,
+      rests: [...(p?.rests ?? []), rest],
+    }))
+  }, [])
 
   // Swapping worlds blocks the main thread for the better part of a second —
   // heightfield, vertex colours, the paper pilot's par flight. Rather than
@@ -158,7 +179,13 @@ export default function App() {
         // 1.5 m anyway — the motes fade themselves out inside that.
         camera={{ fov: TUNING.fov, near: 1.2, far: 20000, position: [0, 400, 0] }}
       >
-        <Scene world={world} par={par} onWorldReady={onWorldReady} rests={presence?.rests ?? null} />
+        <Scene
+          world={world}
+          par={par}
+          onWorldReady={onWorldReady}
+          rests={presence?.rests ?? null}
+          onFlightRested={onFlightRested}
+        />
       </Canvas>
       <div className="dream" aria-hidden="true" />
       {veil && <WorldVeil phase={veil.phase} onDone={veilDone} />}
