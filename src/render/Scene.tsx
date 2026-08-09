@@ -13,7 +13,9 @@ import type { World } from '../sim/world'
 import { Flight } from '../sim/flight'
 import { sampleGradient } from '../sim/terrain'
 import { noteFlight, noteLaunch, recordOf, savedState, writeMarker } from '../game/persist'
+import { postFlight, type RestPoint } from '../game/net'
 import { Ghosts, type GhostData } from './Ghosts'
+import { RestingPlanes } from './RestingPlanes'
 import { TUNING } from '../sim/tuning'
 import { surfaceHeight } from '../sim/terrain'
 import { rgbToHex } from '../sim/palette'
@@ -36,11 +38,14 @@ export function Scene({
   world,
   par,
   onWorldReady,
+  rests,
 }: {
   world: World
   par: number
   /** Fired on the first rendered frame of each world — the veil lifts on it. */
   onWorldReady?: () => void
+  /** Where other players' flights came to rest, from the presence layer. */
+  rests?: RestPoint[] | null
 }) {
   const planeRef = useRef<Group>(null)
   const trail = useMemo(() => new Trail([0.55, 0.9, 1.0]), [])
@@ -71,6 +76,7 @@ export function Scene({
       <Clouds world={world} />
       <Birds world={world} />
       <Herds world={world} />
+      <RestingPlanes world={world} rests={rests ?? null} />
       <Motes world={world} />
       <primitive object={trail.object} />
       <PaperPlane ref={planeRef} world={world} />
@@ -217,6 +223,9 @@ function Simulation({ world, par, planeRef, trail, onWorldReady }: SimProps) {
         const isBest = d > stats.current.best
         if (isBest) stats.current.best = d
         noteFlight(saved, world.day, d, par, flight.landed, flight.path)
+        // The flight joins the world's presence: a resting point and its
+        // metres, anonymously. Fire-and-forget — the game never waits on it.
+        postFlight(world.day, flight.pos.x, flight.pos.z, d, flight.landed)
         writeHud({ newBest: isBest, lastDistance: d, landed: flight.landed })
         // Keep the flight's path as a ghost. `reset()` replaces the array rather
         // than clearing it, so holding the reference is safe. The best is held

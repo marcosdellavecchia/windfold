@@ -6,7 +6,7 @@ import { copyCard, shareCard } from '../game/share'
 
 const metres = (v: number) => Math.round(v).toLocaleString('en-US')
 
-export function Hud({ world, par }: { world: World; par: number }) {
+export function Hud({ world, par, metresFlown }: { world: World; par: number; metresFlown: number }) {
   const s = useHud()
 
   return (
@@ -39,6 +39,10 @@ export function Hud({ world, par }: { world: World; par: number }) {
           </div>
           {/* The world's completable goal: beat the paper pilot and the day is won. */}
           <div className="par">par {metres(par)} m</div>
+          {/* The presence layer's one number: everyone's flying, pooled. */}
+          {metresFlown >= 1000 && (
+            <div className="others">{Math.round(metresFlown / 1000).toLocaleString('en-US')} km flown here</div>
+          )}
           <div className="hint">Move to steer · click or space to launch</div>
           {/* Dev affordances, worth surfacing while the game is being tested. */}
           <div className="keys">R for another world · T for tuning</div>

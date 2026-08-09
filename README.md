@@ -206,8 +206,9 @@ today") arrives with the backend.
 | --- | --- | --- |
 | Best distance, attempt count, best flight's altitude profile, per world | `localStorage` | Until the user clears browser data |
 | Music on/off preference | `localStorage` | Until the user clears browser data |
-| Best distance + attempt count + opaque per-day token | D1 | ~7 days, then purged |
-| Gzipped trail of the best flight | R2 | ~7 days, then purged |
+| Resting point + metres per flight, anonymous aggregate per world | Redis (presence layer) | 14 days, then expired |
+| Best distance + attempt count + opaque per-day token (planned, ghost layer) | D1 | ~7 days, then purged |
+| Gzipped trail of the best flight (planned, ghost layer) | R2 | ~7 days, then purged |
 
 Recent own-attempt trails are kept in memory only — they don't need to survive a
 refresh, and keeping thirty of them in `localStorage` would be wasteful.
@@ -217,10 +218,31 @@ to retain and no account to attach it to.
 
 ---
 
-## Backend — Cloudflare Workers + D1 + R2
+## Backend
 
-Chosen for edge-cheap global reads (ghost fetches happen on every page load,
-worldwide) and near-zero cost on a viral day.
+**Built: the presence layer**, the first server the game has — two Vercel edge
+functions over Redis (Vercel KV / Upstash via REST, no SDK dependency), holding
+nothing but anonymous aggregates:
+
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /api/flight` | One beacon per finished flight: world, resting point, metres, landed. Plausibility-checked, fire-and-forget from the client. |
+| `GET /api/world?id=N` | The world's presence: total metres flown, and up to 400 resting points. Edge-cached a minute. |
+
+Per world: one distance counter and a capped list (600) of resting points, both
+expiring after 14 days. No token, no IP retained, nothing joinable — rule 5 holds
+because there is nothing to join. The client degrades to silence: offline, dev,
+or with no store configured, the game is exactly the solo game.
+
+Deploy needs one thing: a Redis store attached to the Vercel project (the KV /
+Upstash marketplace integration), which provides `KV_REST_API_URL` and
+`KV_REST_API_TOKEN` — both names and their `UPSTASH_REDIS_REST_*` equivalents
+are accepted.
+
+**Planned: the ghost layer** — Cloudflare Workers + D1 + R2, chosen for
+edge-cheap global reads (ghost fetches happen on every page load, worldwide)
+and near-zero cost on a viral day. Worth revisiting whether it stays on
+Cloudflare now that the presence layer lives in Vercel functions.
 
 | Endpoint | Purpose |
 | --- | --- |
@@ -553,6 +575,20 @@ passively into the ground does not qualify — the flare that converts the last 
 the speed into a soft arrival is the game's core energy trade, asked for one final
 time. Alto's made the smooth landing its signature feel-good beat; this is that,
 sized for a game where every previous flight ended in a wall of flat green.
+
+**The presence layer.** The first multiplayer, and it is deliberately not people —
+it is consequences. Every finished flight leaves two anonymous facts on the
+server: where the plane came to rest, and how many metres it flew. The metres
+pool into one quiet line on the splash ("12,402 km flown here"); the resting
+points render as paper on the ground — landed darts sitting upright on the slope,
+crashed ones crumpled and part-buried, placed deterministically from the world's
+seed so everyone sees the same drift. A beach below a popular thermal run silts
+up with pale paper; an untouched far ridge stays pristine. The world reads where
+humanity flew the way snow reads footprints. Water arrivals are skipped — paper
+does not float for two weeks. The whole layer is strictly decorative and fails
+silently to nothing: with no network or no store, the game is exactly the solo
+game. Verified against a mocked API: the beacon posts the right shape, the
+odometer renders, and a low pass over the field shows the drift.
 
 **Own ghosts.** The client half of the ghost system is in: every finished attempt
 stays on screen as a faint white line, the last five plus the personal best, which

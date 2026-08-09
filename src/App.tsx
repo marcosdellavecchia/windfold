@@ -39,6 +39,7 @@ function WorldVeil({ phase, onDone }: { phase: 'in' | 'out'; onDone: () => void 
 import { Canvas } from '@react-three/fiber'
 import { buildWorld, dayNumber } from './sim/world'
 import { computePar } from './sim/par'
+import { fetchPresence, type Presence } from './game/net'
 import { Scene } from './render/Scene'
 import { Hud } from './ui/Hud'
 import { TuningPanel } from './ui/TuningPanel'
@@ -62,6 +63,21 @@ export default function App() {
   // The paper pilot flies the day once, headlessly, and its distance is par.
   // ~100 ms at world build, deterministic, no server involved.
   const par = useMemo(() => computePar(world), [world])
+
+  // The presence layer: what everyone else did on this world. Strictly
+  // decorative — the fetch failing (offline, no backend, dev) leaves the
+  // game exactly as it was.
+  const [presence, setPresence] = useState<Presence | null>(null)
+  useEffect(() => {
+    let alive = true
+    setPresence(null)
+    void fetchPresence(day).then((p) => {
+      if (alive) setPresence(p)
+    })
+    return () => {
+      alive = false
+    }
+  }, [day])
 
   // Swapping worlds blocks the main thread for the better part of a second —
   // heightfield, vertex colours, the paper pilot's par flight. Rather than
@@ -142,11 +158,11 @@ export default function App() {
         // 1.5 m anyway — the motes fade themselves out inside that.
         camera={{ fov: TUNING.fov, near: 1.2, far: 20000, position: [0, 400, 0] }}
       >
-        <Scene world={world} par={par} onWorldReady={onWorldReady} />
+        <Scene world={world} par={par} onWorldReady={onWorldReady} rests={presence?.rests ?? null} />
       </Canvas>
       <div className="dream" aria-hidden="true" />
       {veil && <WorldVeil phase={veil.phase} onDone={veilDone} />}
-      <Hud world={world} par={par} />
+      <Hud world={world} par={par} metresFlown={presence?.metres ?? 0} />
       <AudioToggle muted={music.muted} onToggle={music.toggle} />
       <TuningPanel day={day} onDay={changeDay} world={world} />
     </>

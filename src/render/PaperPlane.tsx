@@ -132,8 +132,11 @@ function csNoise(x: number, z: number): number {
  * shading plus per-panel brightness is what makes the folds read as folds.
  * The left and right panels differ by a few percent on purpose: a perfectly
  * symmetric fold never came off anyone's desk.
+ *
+ * Exported for the resting planes: the darts lying on the ground where other
+ * players' flights ended are this same fold.
  */
-function buildDart(): BufferGeometry {
+export function buildDart(): BufferGeometry {
   // Nose at -Z, tail at +Z. Wingspan ~3.4 m.
   const nose = [0, 0, -2.4]
   const spine = [0, 0.26, 1.5]
