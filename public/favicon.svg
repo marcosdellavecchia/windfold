@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Windfold: the dart against a gloaming sky. Hand-authored, like everything
+       else in the game that looks like art but is really a few numbers. -->
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#232b56"/>
+      <stop offset="0.55" stop-color="#6f5794"/>
+      <stop offset="1" stop-color="#e08fae"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#sky)"/>
+  <!-- the low sun, flattened by refraction, exactly as in the game -->
+  <ellipse cx="47" cy="17" rx="5" ry="3.2" fill="#ffd9a0"/>
+  <ellipse cx="47" cy="17" rx="9" ry="6" fill="#ffd9a0" opacity="0.25"/>
+  <!-- the dart: outer wing bright, inner panel shaded, keel darkest -->
+  <path d="M55 24 L9 41 L31 40 Z" fill="#ffffff"/>
+  <path d="M55 24 L31 40 L36 49 Z" fill="#e6e1d5"/>
+  <path d="M31 40 L29 46 L36 49 Z" fill="#b8b0a0"/>
+  <!-- the wake, thin, the way it stayed -->
+  <path d="M9 41 C 16 44, 20 47, 22 52" stroke="#ffffff" stroke-opacity="0.45" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+</svg>
