@@ -224,6 +224,43 @@ canvas {
   font-variant-numeric: tabular-nums;
 }
 
+/* The swoop-down reveal: whose paper is below. Low on the screen, out of the
+   flight path's way, gone the moment you climb past it. */
+.note {
+  position: fixed;
+  left: 50%;
+  bottom: 96px;
+  transform: translateX(-50%);
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  color: rgba(255, 255, 255, 0.78);
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.35);
+  white-space: nowrap;
+}
+
+/* "flying as Quiet Heron ↻" — a signature, not a setting. */
+.result .signed {
+  margin-top: 18px;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: rgba(255, 255, 255, 0.45);
+  pointer-events: auto;
+}
+
+.result .signed button {
+  margin-left: 6px;
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.6);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.result .signed button:hover {
+  color: #fff;
+}
+
 /* The presence line: quieter than par — other people are ambience, not goals. */
 .prompt .others {
   margin-top: 4px;

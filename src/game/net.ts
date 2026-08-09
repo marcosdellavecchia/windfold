@@ -8,6 +8,10 @@ export interface RestPoint {
   x: number
   z: number
   landed: boolean
+  /** The pilot's call sign, or empty for anonymous paper. */
+  name: string
+  /** How far that flight flew, for the swoop-down reveal. */
+  metres: number
 }
 
 export interface Presence {
@@ -18,12 +22,26 @@ export interface Presence {
 }
 
 /** Fire-and-forget: one beacon per finished flight. */
-export function postFlight(world: number, x: number, z: number, distance: number, landed: boolean) {
+export function postFlight(
+  world: number,
+  x: number,
+  z: number,
+  distance: number,
+  landed: boolean,
+  name: string,
+) {
   try {
     void fetch('/api/flight', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ w: world, x: Math.round(x), z: Math.round(z), d: Math.round(distance), l: landed }),
+      body: JSON.stringify({
+        w: world,
+        x: Math.round(x),
+        z: Math.round(z),
+        d: Math.round(distance),
+        l: landed,
+        n: name,
+      }),
       keepalive: true,
     }).catch(() => {})
   } catch {
@@ -35,13 +53,19 @@ export async function fetchPresence(world: number): Promise<Presence | null> {
   try {
     const r = await fetch(`/api/world?id=${world}`)
     if (!r.ok) return null
-    const data = (await r.json()) as { m: number; rests: Array<[number, number, number]> }
+    const data = (await r.json()) as { m: number; rests: Array<[number, number, number, string?, number?]> }
     if (typeof data.m !== 'number' || !Array.isArray(data.rests)) return null
     return {
       metres: data.m,
       rests: data.rests
         .filter((p) => Array.isArray(p) && Number.isFinite(p[0]) && Number.isFinite(p[1]))
-        .map(([x, z, l]) => ({ x, z, landed: l === 1 })),
+        .map(([x, z, l, n, d]) => ({
+          x,
+          z,
+          landed: l === 1,
+          name: typeof n === 'string' ? n : '',
+          metres: Number(d) || 0,
+        })),
     }
   } catch {
     return null

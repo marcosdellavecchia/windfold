@@ -26,11 +26,15 @@ export default async function handler(req: Request): Promise<Response> {
     const [mRes, rRes] = (await r.json()) as Array<{ result: unknown }>
 
     const m = Number(mRes.result ?? 0) || 0
-    const rests: Array<[number, number, number]> = []
+    const rests: Array<[number, number, number, string, number]> = []
     if (Array.isArray(rRes.result)) {
       for (const item of rRes.result as string[]) {
-        const [x, z, l] = String(item).split(',').map(Number)
-        if (Number.isFinite(x) && Number.isFinite(z)) rests.push([x, z, l ? 1 : 0])
+        const parts = String(item).split(',')
+        const x = Number(parts[0])
+        const z = Number(parts[1])
+        if (!Number.isFinite(x) || !Number.isFinite(z)) continue
+        // Older entries have no name or metres; they stay anonymous paper.
+        rests.push([x, z, Number(parts[2]) ? 1 : 0, parts[3] ?? '', Number(parts[4]) || 0])
       }
     }
 

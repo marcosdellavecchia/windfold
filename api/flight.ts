@@ -19,14 +19,14 @@ const TTL_S = 14 * 86400
 export default async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') return new Response('method', { status: 405 })
 
-  let body: { w?: number; x?: number; z?: number; d?: number; l?: boolean }
+  let body: { w?: number; x?: number; z?: number; d?: number; l?: boolean; n?: string }
   try {
     body = await req.json()
   } catch {
     return new Response('body', { status: 400 })
   }
 
-  const { w, x, z, d, l } = body
+  const { w, x, z, d, l, n } = body
   if (
     typeof w !== 'number' || !Number.isFinite(w) || !Number.isInteger(w) ||
     typeof x !== 'number' || Math.abs(x) > HALF_WORLD ||
@@ -36,7 +36,11 @@ export default async function handler(req: Request): Promise<Response> {
     return new Response('implausible', { status: 400 })
   }
 
-  const rest = `${Math.round(x)},${Math.round(z)},${l ? 1 : 0}`
+  // The call sign is generated from letter-only word lists client-side, and
+  // the server enforces exactly that: letters and spaces, capped. Whatever a
+  // crafted request sends, nothing else can enter the world.
+  const name = typeof n === 'string' ? n.replace(/[^A-Za-z ]/g, '').trim().slice(0, 24) : ''
+  const rest = `${Math.round(x)},${Math.round(z)},${l ? 1 : 0},${name},${Math.round(d)}`
   const ok = await redis([
     ['INCRBYFLOAT', `w:${w}:m`, String(Math.round(d))],
     ['LPUSH', `w:${w}:r`, rest],

@@ -3,6 +3,7 @@ import { useHud } from '../state'
 import type { World } from '../sim/world'
 import { recordOf, savedState } from '../game/persist'
 import { copyCard, shareCard } from '../game/share'
+import { callsign, rerollCallsign } from '../game/callsign'
 
 const metres = (v: number) => Math.round(v).toLocaleString('en-US')
 
@@ -37,21 +38,22 @@ export function Hud({ world, par, metresFlown }: { world: World; par: number; me
       {s.phase === 'ready' && (
         <div className="prompt">
           <div className="title">Windfold</div>
+          {/* One line for the world, par included — the wind is something you
+              feel in the first three seconds of flying, not something to read. */}
           <div className="meta">
-            World {world.day} · {world.palette.mood} {world.biome} · wind{' '}
-            {Math.round(world.air.windSpeed)} m/s
+            World {world.day} · {world.palette.mood} {world.biome} · par {metres(par)} m
           </div>
-          {/* The world's completable goal: beat the paper pilot and the day is won. */}
-          <div className="par">par {metres(par)} m</div>
-          {/* The presence layer's one number: everyone's flying, pooled. Shown
-              from the very first flight — hiding a small number told the first
-              pilots on a world that their flying didn't count. */}
-          {metresFlown >= 100 && <div className="others">{kmFlown(metresFlown)} flown here</div>}
+          {/* The presence layer's one number: everyone's flying, pooled. Worded
+              so it cannot be misread as the player's own distance. */}
+          {metresFlown >= 100 && <div className="others">pilots have flown {kmFlown(metresFlown)} here</div>}
           <div className="hint">Move to steer · click or space to launch</div>
           {/* Dev affordances, worth surfacing while the game is being tested. */}
           <div className="keys">R for another world · T for tuning</div>
         </div>
       )}
+
+      {/* The swoop-down reveal: whose paper is below, and how far it flew. */}
+      {s.phase === 'flying' && s.note && <div className="note">{s.note}</div>}
 
       {s.phase === 'down' && (
         <div className="result">
@@ -68,8 +70,25 @@ export function Hud({ world, par, metresFlown }: { world: World; par: number; me
           </div>
           <Share world={world} />
           <div className="again">Fly again</div>
+          <Signature />
         </div>
       )}
+    </div>
+  )
+}
+
+/**
+ * "Sign your paper": the call sign your resting darts carry, rerollable until
+ * one feels right. Never a prompt, never a modal — rule 7 stands.
+ */
+function Signature() {
+  const [name, setName] = useState(callsign)
+  return (
+    <div className="signed" data-ui>
+      flying as {name}
+      <button onClick={() => setName(rerollCallsign())} title="try another name">
+        ↻
+      </button>
     </div>
   )
 }

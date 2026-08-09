@@ -226,7 +226,7 @@ nothing but anonymous aggregates:
 
 | Endpoint | Purpose |
 | --- | --- |
-| `POST /api/flight` | One beacon per finished flight: world, resting point, metres, landed. Plausibility-checked, fire-and-forget from the client. |
+| `POST /api/flight` | One beacon per finished flight: world, resting point, metres, landed, call sign. Plausibility-checked (and the sign letters-only, capped), fire-and-forget from the client. |
 | `GET /api/world?id=N` | The world's presence: total metres flown, and up to 400 resting points. Edge-cached a minute. |
 
 Per world: one distance counter and a capped list (600) of resting points, both
@@ -589,6 +589,17 @@ does not float for two weeks. The whole layer is strictly decorative and fails
 silently to nothing: with no network or no store, the game is exactly the solo
 game. Verified against a mocked API: the beacon posts the right shape, the
 odometer renders, and a low pass over the field shows the drift.
+
+The paper is signed. Every pilot carries a call sign — two words off curated
+lists, *Quiet Heron*, *Gloaming Fox* — generated rather than typed, so there is
+nothing to moderate and nothing to ban; rerollable from the results screen
+("flying as Gentle Egret ↻") until one feels right, so it still feels chosen.
+No prompt, no modal: rule 7 stands. The sign rides the flight beacon
+(letters-and-spaces enforced server-side, whatever a crafted request sends),
+and it surfaces through the swoop-down reveal: fly low over someone's resting
+dart and a quiet line appears — "Gloaming Fox set down here · 2.1 km". Every
+piece of paper on the ground is a small story you have to descend to read.
+Older, unsigned paper stays anonymous, as it should.
 
 **Own ghosts.** The client half of the ghost system is in: every finished attempt
 stays on screen as a faint white line, the last five plus the personal best, which

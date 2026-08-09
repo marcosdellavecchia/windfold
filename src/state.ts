@@ -21,6 +21,8 @@ export interface HudState {
   lastDistance: number
   /** Whether the last flight ended in a gentle touchdown rather than a crash. */
   landed: boolean
+  /** The swoop-down reveal: whose paper you are flying low over, if anyone's. */
+  note: string
 }
 
 const HUD_HZ = 12
@@ -38,6 +40,7 @@ const draft: HudState = {
   newBest: false,
   lastDistance: 0,
   landed: false,
+  note: '',
 }
 
 let snapshot: HudState = { ...draft }

@@ -14,6 +14,7 @@ import { Flight } from '../sim/flight'
 import { sampleGradient } from '../sim/terrain'
 import { noteFlight, noteLaunch, recordOf, savedState, writeMarker } from '../game/persist'
 import { postFlight, type RestPoint } from '../game/net'
+import { callsign } from '../game/callsign'
 import { Ghosts, type GhostData } from './Ghosts'
 import { RestingPlanes } from './RestingPlanes'
 import { TUNING } from '../sim/tuning'
@@ -91,6 +92,7 @@ export function Scene({
         trail={trail}
         onWorldReady={onWorldReady}
         onFlightRested={onFlightRested}
+        rests={rests ?? null}
       />
     </>
   )
@@ -103,12 +105,13 @@ interface SimProps {
   trail: Trail
   onWorldReady?: () => void
   onFlightRested?: (rest: RestPoint, distance: number) => void
+  rests: RestPoint[] | null
 }
 
 /** How many previous attempts stay on screen, besides the best. */
 const GHOST_ATTEMPTS = 5
 
-function Simulation({ world, par, planeRef, trail, onWorldReady, onFlightRested }: SimProps) {
+function Simulation({ world, par, planeRef, trail, onWorldReady, onFlightRested, rests }: SimProps) {
   const camera = useThree((s) => s.camera)
 
   const flight = useMemo(
@@ -121,6 +124,7 @@ function Simulation({ world, par, planeRef, trail, onWorldReady, onFlightRested 
   // One instance, shared with the HUD's share card.
   const saved = useMemo(() => savedState(), [])
   const markerTimer = useRef(0)
+  const noteTimer = useRef(0)
   const [ghosts, setGhosts] = useState<GhostData>({ attempts: [], best: null })
 
   // The plane's shadow: a soft dark blob hugging the terrain below. Not a
@@ -224,12 +228,38 @@ function Simulation({ world, par, planeRef, trail, onWorldReady, onFlightRested 
         markerTimer.current = 0
         writeMarker(world.day, flight.distance)
       }
+
+      // The swoop-down reveal: fly low near someone's resting paper and their
+      // call sign surfaces for a moment. Every dart becomes a small story you
+      // have to descend to read.
+      noteTimer.current += dt
+      if (noteTimer.current > 0.25) {
+        noteTimer.current = 0
+        let note = ''
+        if (rests && flight.aglHeight < 90) {
+          let bestD2 = 110 * 110
+          for (const r of rests) {
+            if (!r.name) continue
+            const dx = r.x - flight.pos.x
+            const dz = r.z - flight.pos.z
+            const d2 = dx * dx + dz * dz
+            if (d2 < bestD2) {
+              bestD2 = d2
+              note = `${r.name} ${r.landed ? 'set down here' : 'came down here'}${
+                r.metres > 0 ? ` · ${r.metres >= 1000 ? (r.metres / 1000).toFixed(1) + ' km' : r.metres + ' m'}` : ''
+              }`
+            }
+          }
+        }
+        writeHud({ note })
+      }
     }
 
     // --- resolve the end of a flight ---------------------------------------
     const phaseChanged = prevPhase.current !== flight.phase
     if (phaseChanged) {
       if (flight.phase === 'down') {
+        writeHud({ note: '' })
         const d = flight.distance
         const isBest = d > stats.current.best
         if (isBest) stats.current.best = d
@@ -238,8 +268,12 @@ function Simulation({ world, par, planeRef, trail, onWorldReady, onFlightRested 
         // metres, anonymously. Fire-and-forget — the game never waits on it —
         // and optimistically, so your own paper is lying there on the next
         // attempt instead of after a reload.
-        postFlight(world.day, flight.pos.x, flight.pos.z, d, flight.landed)
-        onFlightRested?.({ x: flight.pos.x, z: flight.pos.z, landed: flight.landed }, d)
+        const sign = callsign()
+        postFlight(world.day, flight.pos.x, flight.pos.z, d, flight.landed, sign)
+        onFlightRested?.(
+          { x: flight.pos.x, z: flight.pos.z, landed: flight.landed, name: sign, metres: Math.round(d) },
+          d,
+        )
         writeHud({ newBest: isBest, lastDistance: d, landed: flight.landed })
         // Keep the flight's path as a ghost. `reset()` replaces the array rather
         // than clearing it, so holding the reference is safe. The best is held
