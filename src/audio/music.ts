@@ -52,6 +52,8 @@ export class Music {
   private ctx: AudioContext | null = null
   private master: GainNode | null = null
   private wet: GainNode | null = null
+  private tone: BiquadFilterNode | null = null
+  private shimmer: GainNode | null = null
   private timer: number | null = null
   private nextBar = 0
   private bar = 0
@@ -142,14 +144,24 @@ export class Music {
     const wet = ctx.createGain()
     wet.gain.value = 0.55
 
+    // The vario voice's gate: high bells are scheduled every bar regardless,
+    // and this gain — driven by the climb rate — decides whether they exist.
+    // Silent air costs a few muted oscillators and nothing else.
+    const shimmer = ctx.createGain()
+    shimmer.gain.value = 0
+
     master.connect(tone)
     tone.connect(trim)
     wet.connect(reverb)
     reverb.connect(master)
+    shimmer.connect(master)
+    shimmer.connect(wet)
     trim.connect(ctx.destination)
 
     this.master = master
     this.wet = wet
+    this.tone = tone
+    this.shimmer = shimmer
 
     this.nextBar = ctx.currentTime + 0.35
     this.timer = window.setInterval(this.tick, TICK_MS)
@@ -162,7 +174,39 @@ export class Music {
     void this.ctx?.close()
     this.ctx = null
     this.master = null
+    this.tone = null
+    this.shimmer = null
     this.started = false
+  }
+
+  /**
+   * The variometer, as music: climb rate opens a gate on high bells that ride
+   * the day's own chord. You learn to hear lift the way glider pilots do —
+   * before the eyes confirm it.
+   */
+  setLift(liftMs: number) {
+    if (!this.ctx || !this.shimmer) return
+    const target = Math.min(Math.max(liftMs / 6, 0), 1)
+    this.shimmer.gain.setTargetAtTime(target, this.ctx.currentTime, 0.35)
+  }
+
+  /**
+   * Height opens the master lowpass a little — the sky is airier up high, the
+   * ground closer and darker. Subconscious altimetry.
+   */
+  setAltitude(t01: number) {
+    if (!this.ctx || !this.tone) return
+    const t = Math.min(Math.max(t01, 0), 1)
+    this.tone.frequency.setTargetAtTime(2600 + t * 1800, this.ctx.currentTime, 0.8)
+  }
+
+  /** A gentle landing gets a resolved tonic-and-fifth, in the day's key. */
+  landingBell() {
+    const ctx = this.ctx
+    if (!ctx) return
+    const at = ctx.currentTime + 0.06
+    this.pluck(at, this.hz(0), 0.1, 0.4, 0)
+    this.pluck(at + 0.45, this.hz(7), 0.07, 0.6, 0.15)
   }
 
   private tick = () => {
@@ -201,7 +245,13 @@ export class Music {
       const beat = (i * BEATS_PER_BAR) / notes + (rng() - 0.5) * 0.18
       const tone = tones[Math.floor(rng() * tones.length)]
       const octave = rng() < 0.35 ? 24 : 12
-      this.pluck(at + beat * BEAT, this.hz(degreeSemitone(chord.degree + tone) + octave), 0.085 + rng() * 0.05)
+      this.pluck(
+        at + beat * BEAT,
+        this.hz(degreeSemitone(chord.degree + tone) + octave),
+        0.085 + rng() * 0.05,
+        rng(),
+        (rng() - 0.5) * 0.7,
+      )
     }
 
     // --- melody: a short phrase on some bars, silence on the rest -----------
@@ -214,9 +264,32 @@ export class Music {
       for (let i = 0; i < len; i++) {
         const beat = start + i * (0.5 + rng() * 0.5)
         if (beat >= BEATS_PER_BAR) break
-        this.pluck(at + beat * BEAT, this.hz(degreeSemitone(step) + 24), 0.07 + rng() * 0.04)
+        this.pluck(
+          at + beat * BEAT,
+          this.hz(degreeSemitone(step) + 24),
+          0.07 + rng() * 0.04,
+          rng(),
+          (rng() - 0.5) * 0.5,
+        )
         step += rng() < 0.6 ? -1 : 1
       }
+    }
+
+    // --- the vario voice: bells three octaves up, gated by the climb --------
+    // Scheduled on every bar like everything else; whether they exist at all
+    // is decided by the air, through the shimmer gain the sim drives.
+    const sparks = 4 + Math.floor(rng() * 3)
+    for (let i = 0; i < sparks; i++) {
+      const beat = (i * BEATS_PER_BAR) / sparks + rng() * 0.3
+      const tone = tones[Math.floor(rng() * tones.length)]
+      this.pluck(
+        at + beat * BEAT,
+        this.hz(degreeSemitone(chord.degree + tone) + 36),
+        0.045 + rng() * 0.03,
+        rng(),
+        (rng() - 0.5) * 0.8,
+        this.shimmer,
+      )
     }
   }
 
@@ -224,13 +297,20 @@ export class Music {
     return this.tonic * Math.pow(2, semitones / 12)
   }
 
-  /** Music-box / celesta voice: fast attack, long soft decay, one bell partial. */
-  private pluck(at: number, freq: number, peak: number) {
+  /**
+   * Music-box / celesta voice: fast attack, long soft decay, one bell partial.
+   * `jitter` shades the decay length — seeded by the caller, because this used
+   * to be the one Math.random() in the entire game, and "everyone hears the
+   * same piece" deserves to be literally true. `pan` places the note in the
+   * stereo field; `bus` routes it through a gate (the vario shimmer) instead
+   * of straight to the master.
+   */
+  private pluck(at: number, freq: number, peak: number, jitter: number, pan: number, bus?: GainNode | null) {
     const ctx = this.ctx
     if (!ctx || !this.master || !this.wet) return
     if (at < ctx.currentTime) return
 
-    const dur = 2.4 + Math.random() * 0.8
+    const dur = 2.4 + jitter * 0.8
     const g = ctx.createGain()
     g.gain.setValueAtTime(0, at)
     g.gain.linearRampToValueAtTime(peak, at + 0.012)
@@ -251,12 +331,20 @@ export class Music {
     const bg = ctx.createGain()
     bg.gain.value = 0.3
 
+    const panner = ctx.createStereoPanner()
+    panner.pan.value = Math.max(-1, Math.min(1, pan))
+
     a.connect(lp)
     b.connect(bg)
     bg.connect(lp)
     lp.connect(g)
-    g.connect(this.master)
-    g.connect(this.wet)
+    g.connect(panner)
+    if (bus) {
+      panner.connect(bus)
+    } else {
+      panner.connect(this.master)
+      panner.connect(this.wet)
+    }
 
     a.start(at)
     b.start(at)

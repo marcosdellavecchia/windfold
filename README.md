@@ -691,6 +691,19 @@ before audio. It starts on the first click, tap, or key, which is the same gestu
 launches the first flight, so in practice it begins when the game does. Measured output
 is −29 dBFS RMS / −14 dBFS peak: present, but under conversation level.
 
+**The music knows you are flying now.** Three couplings, fed from the same draft
+the HUD reads so nothing crosses the Canvas boundary. The variometer is a voice:
+high bells riding the day's own chord, scheduled on every bar like everything
+else, gated by a gain the climb rate drives — you learn to hear lift the way
+glider pilots do, before the eyes confirm it. Altitude opens the master lowpass a
+little, so height literally sounds airier and the ground darker: subconscious
+altimetry. And a gentle landing rings a resolved tonic-and-fifth in the day's key
+— the crash gets nothing, which is its own kind of feedback. Two side effects of
+the pass: every pluck now sits somewhere in the stereo field instead of dead
+centre, and the one `Math.random()` in the whole game — a decay-length shade in
+the pluck voice — became seeded, so "everyone hears the same piece" is now
+literally true.
+
 **Known gaps in the current build**
 - **60 fps on a mid-tier Android is still unverified**, and the dream pass has not
   helped: the sky is now a four-octave fbm over a full-screen dome, and the
@@ -704,10 +717,12 @@ is −29 dBFS RMS / −14 dBFS peak: present, but under conversation level.
 - The bundle is 302 kB gzipped, nearly all Three.js.
 - Trees have no collision. Clipping a treetop is free, which is forgiving but wrong.
 - Terracing on the mesa biome is subtler than intended at 32 m cells.
-- **The music has never been listened to by anyone.** It is verified to produce signal
-  at the right level and to mute cleanly, and it is consonant by construction, but
-  whether it is actually pleasant over ten minutes is unmeasured. Voicing, tempo and
-  the melody's rest density are the knobs.
+- ~~The music has never been listened to by anyone.~~ It has now, and the verdict
+  was "I really like the vibes." What remains unmeasured is the long tail: the
+  piece is statistically flat over time (minute ten draws from the same
+  distributions as minute one) and every day shares one progression in one mode.
+  Slow macro-envelopes over the bar index and a small family of per-day
+  progressions are the next knobs, sketched but not built.
 
 ---
 

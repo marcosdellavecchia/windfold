@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Music } from './music'
+import { hudDraft } from '../state'
 
 const STORAGE_KEY = 'windfold.muted'
 
@@ -38,7 +39,22 @@ export function useMusic(seed: number) {
   useEffect(() => {
     const music = instance()
     const detach = music.attachAutostart()
+
+    // The flight feeds the music through the same draft the HUD reads — no
+    // wiring across the Canvas boundary. Lift gates the vario bells, altitude
+    // opens the lowpass, and a gentle landing rings its bell once.
+    let wasDown = false
+    const feed = window.setInterval(() => {
+      const flying = hudDraft.phase === 'flying'
+      music.setLift(flying ? hudDraft.airLift : 0)
+      music.setAltitude(Math.min(hudDraft.altitude / 900, 1))
+      const down = hudDraft.phase === 'down'
+      if (down && !wasDown && hudDraft.landed) music.landingBell()
+      wasDown = down
+    }, 120)
+
     return () => {
+      window.clearInterval(feed)
       detach()
       music.dispose()
       ref.current = null
