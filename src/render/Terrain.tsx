@@ -381,6 +381,40 @@ function buildGeometry(world: World): BufferGeometry {
         c[k] *= 1 + (warmTint[k] - 1) * warm + (coolTint[k] - 1) * cool
       }
 
+      // Watercourses — as damp ground, not as water.
+      //
+      // Painting the drainage in water colour was the obvious thing and it was
+      // wrong twice over. A vertex here is 32 m apart, so the narrowest mark this
+      // field can make is already wider than most rivers, and a 32 m ribbon of
+      // flat blue laid over a hillside reads as a road rather than a stream. And
+      // the colour had nothing to keep it honest: the water *surface* arrives at
+      // its colour through Fresnel, a sky reflection and its own deep and shallow
+      // tones, so a lake and a painted stream on the same map disagreed about
+      // what water looks like.
+      //
+      // What a watercourse this size actually looks like from a glider is a
+      // darker, greener seam. The ground along it stays damp and the vegetation
+      // follows it, and that reads as a river valley at every altitude without
+      // ever claiming to be a water surface. Anything genuinely wide enough to
+      // show water is below the waterline already, where the water plane draws it.
+      // Only the core of a thread, not its whole falloff. Vertex colours are 32 m
+      // apart and interpolate across the triangles between, so the narrowest
+      // possible mark is already ~64 m wide before any of this is applied — take
+      // the drainage field at face value and a channel spreads to a couple of
+      // hundred metres of soft wash, which is a smear across a hillside rather
+      // than a line down it.
+      const wet = smoothstep(0.3, 0.85, hf.wet[i])
+      if (wet > 0) {
+        // Steepness thins it: a torrent down a mountainside is a metre wide and
+        // mostly white, so the seam belongs on the ground that can hold a valley.
+        const damp = wet * (1 - smoothstep(0.5, 1.1, slope) * 0.6)
+        lerp3(c, c, canopy, damp * 0.5)
+        const shade = 1 - damp * 0.16
+        c[0] *= shade
+        c[1] *= shade
+        c[2] *= shade
+      }
+
       if (hf.hasWater) {
         // The shore band above the waterline — sand, shingle, silt or ash by
         // palette. Width wanders with the patch field so the coast is a coast

@@ -35,6 +35,15 @@ export interface Heightfield {
   landform2: LandformId
   /** Whether two noise characters were blended across the map. */
   hybrid: boolean
+  /**
+   * Drainage, 0 to 1, one per vertex. See `computeDrainage`.
+   *
+   * A property of the day's world rather than of how it is drawn — where water
+   * would run is a fact about the shape of the ground — which is why it lives
+   * here next to the heights it was derived from, the same argument that keeps
+   * the flora masks in `sim`.
+   */
+  wet: Float32Array
 }
 
 /**
@@ -568,8 +577,172 @@ export function generateHeightfield(biome: BiomeId, rng: Rng): Heightfield {
 
   const hasWater = shape.waterFrac > 0
   const waterLevel = hasWater ? min + (max - min) * shape.waterFrac : min - 1
+  const wet = computeDrainage(data, n, min, max, waterLevel)
 
-  return { size: WORLD_SIZE, seg, cell, data, min, max, waterLevel, hasWater, landform, landform2, hybrid }
+  return { size: WORLD_SIZE, seg, cell, data, min, max, waterLevel, hasWater, landform, landform2, hybrid, wet }
+}
+
+/** Buckets for the ordering pass below. At 800 m of relief each is about 20 cm. */
+const DRAIN_BUCKETS = 4096
+/**
+ * What fraction of a map carries a visible thread, and what fraction carries a
+ * full one — as fractions rather than as flow values, because the flow itself is
+ * not comparable between biomes.
+ *
+ * Measured, log2 of the flow at the 99th percentile runs from 6.3 on a volcanic
+ * map to 10.3 on a field one: steep dissected ground splits into many short
+ * catchments that never gather, while flat ground runs a long way before it finds
+ * anywhere to go. A single threshold across that range put two percent of a field
+ * map under water and left the mountains, which are the ones with actual valleys
+ * in them, completely dry. So each day is asked where its own drainage is, and
+ * gets the same amount of it.
+ */
+const DRAIN_SHOW = 0.985
+const DRAIN_FULL = 0.999
+
+/**
+ * Where water would run, by flow accumulation over the finished heightfield.
+ *
+ * The `rivers` landform has always carved branching channels and they have always
+ * been bone dry, because water in this game is a single plane at one altitude and
+ * a river runs downhill. The obvious cheap fix is to paint the carve field — but
+ * that field only exists on river days, so every other map would stay dry, and it
+ * describes where the channels were *cut* rather than where water would actually
+ * collect once the landforms, the accidents and the settling had all had their say.
+ *
+ * This asks the finished ground instead. Give every cell one unit of rain, walk
+ * the map from its highest cell to its lowest, and hand each cell's total to its
+ * steepest downhill neighbour. What accumulates is drainage: threads that converge,
+ * that follow the valleys the terrain actually has, and that appear on every biome
+ * and every landform without any of them knowing about it. Cells with no lower
+ * neighbour keep what they were given, which is what a basin with no outlet does.
+ *
+ * The ordering is a counting sort rather than a comparison sort: 147k cells at
+ * O(n log n) with a comparator callback costs more than the accumulation it exists
+ * to enable. Two cells inside the same 20 cm bucket may be handled out of order,
+ * which loses a little flow at that pair and is invisible by construction.
+ *
+ * Paint only. Nothing here touches a height, so it cannot move the flight model —
+ * the one thing carving a real riverbed would certainly have done.
+ */
+function computeDrainage(data: Float32Array, n: number, min: number, max: number, waterLevel: number): Float32Array {
+  const count = n * n
+  const span = Math.max(max - min, 1e-6)
+  const scale = (DRAIN_BUCKETS - 1) / span
+
+  // Counting sort into descending height order.
+  const counts = new Uint32Array(DRAIN_BUCKETS + 1)
+  for (let i = 0; i < count; i++) {
+    // Inverted, so bucket 0 holds the highest ground and the walk runs downhill.
+    counts[DRAIN_BUCKETS - 1 - (((data[i] - min) * scale) | 0)]++
+  }
+  let running = 0
+  for (let b = 0; b < DRAIN_BUCKETS; b++) {
+    const c = counts[b]
+    counts[b] = running
+    running += c
+  }
+  const order = new Uint32Array(count)
+  for (let i = 0; i < count; i++) {
+    order[counts[DRAIN_BUCKETS - 1 - (((data[i] - min) * scale) | 0)]++] = i
+  }
+
+  // Position of each cell in that walk, which is what makes flats drainable.
+  //
+  // Accumulating only into strictly lower neighbours sounds right and does not
+  // work: fbm at 32 m cells is full of local minima, and the settling flattens
+  // more of them. Measured, 2.5% of an alpine map is a pit and 40.7% of a field
+  // one is — so flow stopped almost as soon as it started and the network came
+  // out as thousands of separate puddles rather than anything that joined up.
+  //
+  // Proper depression filling wants a priority queue and another pass. It is not
+  // needed here, because the walk order already *is* a height ordering: handing
+  // flow to any neighbour that comes later in it can never form a cycle, and on
+  // flat ground later means lower-or-equal. So a cell drains to the best of its
+  // later neighbours — steepest descent wherever a real slope exists, and simply
+  // onward across a flat where none does. A basin ringed entirely by higher
+  // ground still keeps what it was given, which is what a basin does.
+  const rank = new Uint32Array(count)
+  for (let k = 0; k < count; k++) rank[order[k]] = k
+
+  const flow = new Float32Array(count).fill(1)
+  const diag = 1 / Math.SQRT2
+  for (let k = 0; k < count; k++) {
+    const i = order[k]
+    const ix = i % n
+    const iz = (i / n) | 0
+    const h = data[i]
+    let bestIdx = -1
+    let bestScore = -Infinity
+    // Eight neighbours, because four makes water run in staircases along the grid
+    // and the staircase is visible from the air as a network of right angles.
+    for (let dz = -1; dz <= 1; dz++) {
+      const jz = iz + dz
+      if (jz < 0 || jz >= n) continue
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dz === 0) continue
+        const jx = ix + dx
+        if (jx < 0 || jx >= n) continue
+        const j = jz * n + jx
+        if (rank[j] <= k) continue
+        // Per unit distance, so a diagonal has to be steeper to win — otherwise
+        // every flow leaves at 45 degrees, which is the same staircase again.
+        const score = (h - data[j]) * (dx !== 0 && dz !== 0 ? diag : 1)
+        if (score > bestScore) {
+          bestScore = score
+          bestIdx = j
+        }
+      }
+    }
+    if (bestIdx >= 0) flow[bestIdx] += flow[i]
+  }
+
+  // Flow spans four orders of magnitude, so the useful measure is its logarithm:
+  // on a linear scale one trunk river saturates and every tributary reads as zero.
+  //
+  // The two thresholds come from the day's own histogram. 256 bins over the whole
+  // plausible range is an O(n) pass and is plenty: the bins are 0.08 of a log2
+  // apart, far finer than the difference between a stream and a hillside.
+  const HIST = 256
+  const HIST_TOP = 20
+  //
+  // Counted over dry land only. A river ends at the sea, so on a coastal or an
+  // archipelago map most of the network sits below the waterline where the water
+  // plane already covers it — and letting those cells set the threshold spent the
+  // whole allowance underwater and left the land with a tenth of a percent.
+  const hist = new Uint32Array(HIST)
+  const logs = new Float32Array(count)
+  let land = 0
+  for (let i = 0; i < count; i++) {
+    const l = Math.log2(flow[i] + 1)
+    logs[i] = l
+    if (data[i] <= waterLevel) continue
+    land++
+    const b = (l * (HIST / HIST_TOP)) | 0
+    hist[b < 0 ? 0 : b >= HIST ? HIST - 1 : b]++
+  }
+  const at = (frac: number): number => {
+    let seen = 0
+    const target = Math.max(land, 1) * frac
+    for (let b = 0; b < HIST; b++) {
+      seen += hist[b]
+      if (seen >= target) return (b + 1) * (HIST_TOP / HIST)
+    }
+    return HIST_TOP
+  }
+  const show = at(DRAIN_SHOW)
+  // A guard, not a tuning knob: on a map flat enough that almost every cell has
+  // the same flow, both percentiles land in one bin and the smoothstep would
+  // divide by nothing.
+  const full = Math.max(at(DRAIN_FULL), show + 0.5)
+
+  const wet = new Float32Array(count)
+  for (let i = 0; i < count; i++) {
+    // Nothing under the waterline: the water plane is already there, and a
+    // watercourse painted on a lake bed would show through it.
+    wet[i] = data[i] <= waterLevel ? 0 : smoothstep(show, full, logs[i])
+  }
+  return wet
 }
 
 /**
