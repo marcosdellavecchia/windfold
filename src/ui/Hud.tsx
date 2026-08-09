@@ -3,7 +3,7 @@ import { useHud } from '../state'
 import type { World } from '../sim/world'
 import { recordOf, savedState } from '../game/persist'
 import { copyCard, shareCard } from '../game/share'
-import { callsign, rerollCallsign } from '../game/callsign'
+import { callsign, rerollCallsign, setCallsign } from '../game/callsign'
 
 const metres = (v: number) => Math.round(v).toLocaleString('en-US')
 
@@ -49,6 +49,8 @@ export function Hud({ world, par, metresFlown }: { world: World; par: number; me
           <div className="hint">Move to steer · click or space to launch</div>
           {/* Dev affordances, worth surfacing while the game is being tested. */}
           <div className="keys">R for another world · T for tuning</div>
+          {/* Sign the paper before it flies — on the ramp, ignorable forever. */}
+          <Signature />
         </div>
       )}
 
@@ -78,15 +80,44 @@ export function Hud({ world, par, metresFlown }: { world: World; par: number; me
 }
 
 /**
- * "Sign your paper": the call sign your resting darts carry, rerollable until
- * one feels right. Never a prompt, never a modal — rule 7 stands.
+ * "Sign your paper": the call sign your resting darts carry. Type your own,
+ * roll another, or keep what you were dealt — inline, right where you are.
+ * Never a prompt, never a modal: rule 7 stands, and a first-time visitor can
+ * ignore this line forever.
  */
 function Signature() {
   const [name, setName] = useState(callsign)
+  const [editing, setEditing] = useState(false)
+
+  if (editing) {
+    const commit = (value: string) => {
+      setName(setCallsign(value))
+      setEditing(false)
+    }
+    return (
+      <div className="signed" data-ui>
+        flying as{' '}
+        <input
+          autoFocus
+          defaultValue={name}
+          maxLength={20}
+          spellCheck={false}
+          onFocus={(e) => e.currentTarget.select()}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commit(e.currentTarget.value)
+            if (e.key === 'Escape') setEditing(false)
+          }}
+          onBlur={(e) => commit(e.currentTarget.value)}
+        />
+      </div>
+    )
+  }
+
   return (
     <div className="signed" data-ui>
       flying as {name}
-      <button onClick={() => setName(rerollCallsign())} title="try another name">
+      <button onClick={() => setEditing(true)}>change</button>
+      <button onClick={() => setName(rerollCallsign())} title="roll another sign">
         ↻
       </button>
     </div>

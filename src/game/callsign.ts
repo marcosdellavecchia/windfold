@@ -34,7 +34,21 @@ export function callsign(): string {
 }
 
 export function rerollCallsign(): string {
-  const name = `${pick(FIRST)} ${pick(SECOND)}`
+  return store(`${pick(FIRST)} ${pick(SECOND)}`)
+}
+
+/**
+ * A typed sign. Client-side it obeys the same rules the server enforces —
+ * letters and spaces, capped — so what you see is what the world can carry.
+ * Emptied out, it falls back to a rolled sign: paper is never unsigned by
+ * accident, only by history.
+ */
+export function setCallsign(raw: string): string {
+  const clean = raw.replace(/[^A-Za-z ]/g, '').replace(/ +/g, ' ').trim().slice(0, 20)
+  return clean ? store(clean) : rerollCallsign()
+}
+
+function store(name: string): string {
   try {
     localStorage.setItem(KEY, name)
   } catch {

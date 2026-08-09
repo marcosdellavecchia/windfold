@@ -25,6 +25,18 @@ const keys = { left: false, right: false, up: false, down: false }
 let captured = false
 
 /**
+ * Whether a keyboard event belongs to a text field. The game binds the whole
+ * keyboard — Space launches, R rerolls the world, T opens the panel, WASD
+ * steers — so the moment someone types "Mar<space>" into the call-sign field,
+ * the plane would launch mid-keystroke. Every game key handler checks this
+ * and stands down while the player is typing.
+ */
+export function isTyping(e: KeyboardEvent): boolean {
+  const t = e.target as HTMLElement | null
+  return !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
+}
+
+/**
  * While a UI surface owns the pointer — the tuning panel, mainly — the pointer
  * and touch stop steering and clicks commit nothing, so adjusting a slider
  * mid-flight does not also roll the aircraft into a hill. The keyboard keeps
@@ -81,6 +93,7 @@ export function attachInput(target: HTMLElement | Window = window): () => void {
   }
 
   const onKeyDown = (e: KeyboardEvent) => {
+    if (isTyping(e)) return
     switch (e.code) {
       case 'ArrowLeft':
       case 'KeyA':
@@ -107,6 +120,7 @@ export function attachInput(target: HTMLElement | Window = window): () => void {
   }
 
   const onKeyUp = (e: KeyboardEvent) => {
+    if (isTyping(e)) return
     switch (e.code) {
       case 'ArrowLeft':
       case 'KeyA':

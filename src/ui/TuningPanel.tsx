@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { TUNING, resetTuning, type Tuning } from '../sim/tuning'
 import { BIOME_ORDER } from '../sim/palette'
-import { setPointerCaptured } from '../input'
+import { isTyping, setPointerCaptured } from '../input'
 import type { World } from '../sim/world'
 
 interface Row {
@@ -77,7 +77,7 @@ export function TuningPanel({ day, onDay, world }: { day: number; onDay: (d: num
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.metaKey || e.ctrlKey) return
+      if (e.metaKey || e.ctrlKey || isTyping(e)) return
       if (e.code === 'KeyT') setOpen((v) => !v)
       // R works with the panel closed too — rerolling worlds is the loop when
       // testing terrain, and opening the panel every time gets old fast.

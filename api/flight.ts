@@ -11,6 +11,16 @@
 export const config = { runtime: 'edge' }
 
 const HALF_WORLD = 6144
+
+/**
+ * Deliberately short and unambiguous. Over-blocking a "Raccoon" is a cost
+ * worth paying (the Scunthorpe problem cuts both ways); anything subtler than
+ * this list is a judgement call a static file should not be making.
+ */
+const BLOCKED = [
+  'nigg', 'faggot', 'kike', 'spic', 'chink', 'wetback', 'coon', 'tranny',
+  'retard', 'hitler', 'nazi', 'rape', 'cunt', 'whore', 'slut', 'pedo',
+]
 /** No honest flight is this long; see the harness distribution. */
 const MAX_DISTANCE = 30000
 const REST_CAP = 600
@@ -36,10 +46,14 @@ export default async function handler(req: Request): Promise<Response> {
     return new Response('implausible', { status: 400 })
   }
 
-  // The call sign is generated from letter-only word lists client-side, and
-  // the server enforces exactly that: letters and spaces, capped. Whatever a
-  // crafted request sends, nothing else can enter the world.
-  const name = typeof n === 'string' ? n.replace(/[^A-Za-z ]/g, '').trim().slice(0, 24) : ''
+  // Call signs may be typed now, so the gate has two layers. Letters and
+  // spaces only, capped — digits and symbols never enter the world, which
+  // also kills most leetspeak evasion — and a short blocklist for the words
+  // that need no debate. A blocked name ships as anonymous paper: the flight
+  // still counts, the signature does not.
+  let name = typeof n === 'string' ? n.replace(/[^A-Za-z ]/g, '').trim().slice(0, 24) : ''
+  const squashed = name.toLowerCase().replace(/ /g, '')
+  if (BLOCKED.some((w) => squashed.includes(w))) name = ''
   const rest = `${Math.round(x)},${Math.round(z)},${l ? 1 : 0},${name},${Math.round(d)}`
   const ok = await redis([
     ['INCRBYFLOAT', `w:${w}:m`, String(Math.round(d))],

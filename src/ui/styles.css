@@ -238,8 +238,9 @@ canvas {
   white-space: nowrap;
 }
 
-/* "flying as Quiet Heron ↻" — a signature, not a setting. */
-.result .signed {
+/* "flying as Quiet Heron · change ↻" — a signature, not a setting. Lives on
+   the splash and the results screen; editing happens inline, never a modal. */
+.signed {
   margin-top: 18px;
   font-size: 11px;
   letter-spacing: 0.12em;
@@ -247,18 +248,29 @@ canvas {
   pointer-events: auto;
 }
 
-.result .signed button {
-  margin-left: 6px;
+.signed button {
+  margin-left: 8px;
   background: none;
   border: none;
   color: rgba(255, 255, 255, 0.6);
   font: inherit;
-  font-size: 13px;
   cursor: pointer;
 }
 
-.result .signed button:hover {
+.signed button:hover {
   color: #fff;
+}
+
+.signed input {
+  width: 13ch;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.4);
+  color: rgba(255, 255, 255, 0.9);
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: center;
+  outline: none;
 }
 
 /* The presence line: quieter than par — other people are ambience, not goals. */
