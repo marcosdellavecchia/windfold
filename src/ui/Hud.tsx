@@ -47,15 +47,10 @@ export function Hud({ world, par, metresFlown }: { world: World; par: number; me
               so it cannot be misread as the player's own distance. */}
           {metresFlown >= 100 && <div className="others">pilots have flown {kmFlown(metresFlown)} here</div>}
           <div className="hint">Move to steer · click or space to launch</div>
-          {/* Dev affordances, worth surfacing while the game is being tested. */}
-          <div className="keys">R for another world · T for tuning</div>
           {/* Sign the paper before it flies — on the ramp, ignorable forever. */}
           <Signature />
         </div>
       )}
-
-      {/* The swoop-down reveal: whose paper is below, and how far it flew. */}
-      {s.phase === 'flying' && s.note && <div className="note">{s.note}</div>}
 
       {s.phase === 'down' && (
         <div className="result">

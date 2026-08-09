@@ -600,11 +600,16 @@ while a text field has focus — without that, "Mar<space>" launches the plane
 mid-keystroke. What travels is gated twice server-side: letters and spaces
 only, capped (digits and symbols never enter the world, which kills most
 leetspeak evasion), plus a short unambiguous blocklist — a blocked name ships
-as anonymous paper, flight counted, signature withheld. The sign surfaces
-through the swoop-down reveal: fly low over someone's resting dart and a quiet
-line appears — "Gloaming Fox set down here · 2.1 km". Every piece of paper on
-the ground is a small story you have to descend to read. Older, unsigned
-paper stays anonymous, as it should.
+as anonymous paper, flight counted, signature withheld. The sign lives in the
+world itself: a small label floats above the resting dart — "Gloaming Fox ·
+2.7 km" — fading in a few hundred metres out, billboarded to the camera,
+occluded by hills like anything that is really there. A pooled handful of
+canvas-texture planes serves the nearest darts ahead; the pool's one hard
+lesson was that "nearest" fills itself with darts *behind* the camera —
+rendered perfectly where nobody looks — so candidates are filtered to the
+forward hemisphere first. Every piece of paper on the ground is a small story
+you have to descend to read. Older, unsigned paper stays anonymous, as it
+should.
 
 **Own ghosts.** The client half of the ghost system is in: every finished attempt
 stays on screen as a faint white line, the last five plus the personal best, which

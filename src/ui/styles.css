@@ -224,20 +224,6 @@ canvas {
   font-variant-numeric: tabular-nums;
 }
 
-/* The swoop-down reveal: whose paper is below. Low on the screen, out of the
-   flight path's way, gone the moment you climb past it. */
-.note {
-  position: fixed;
-  left: 50%;
-  bottom: 96px;
-  transform: translateX(-50%);
-  font-size: 12px;
-  letter-spacing: 0.14em;
-  color: rgba(255, 255, 255, 0.78);
-  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.35);
-  white-space: nowrap;
-}
-
 /* "flying as Quiet Heron · change ↻" — a signature, not a setting. Lives on
    the splash and the results screen; editing happens inline, never a modal. */
 .signed {
@@ -294,14 +280,6 @@ canvas {
   50% {
     opacity: 0.45;
   }
-}
-
-/* Quieter than the hint and it does not pulse: these are for the testers. */
-.prompt .keys {
-  margin-top: 10px;
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  color: rgba(255, 255, 255, 0.38);
 }
 
 .result .fanfare {
