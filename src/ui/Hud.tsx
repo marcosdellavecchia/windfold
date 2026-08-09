@@ -1,5 +1,8 @@
+import { useState } from 'react'
 import { useHud } from '../state'
 import type { World } from '../sim/world'
+import { recordOf, savedState } from '../game/persist'
+import { copyCard, shareCard } from '../game/share'
 
 const metres = (v: number) => Math.round(v).toLocaleString('en-US')
 
@@ -31,11 +34,14 @@ export function Hud({ world, par }: { world: World; par: number }) {
         <div className="prompt">
           <div className="title">Windfold</div>
           <div className="meta">
-            Day {world.day} · {world.palette.mood} {world.biome} · wind{' '}
+            World {world.day} · {world.palette.mood} {world.biome} · wind{' '}
             {Math.round(world.air.windSpeed)} m/s
           </div>
-          {/* The day's completable goal: beat the paper pilot and the day is won. */}
-          <div className="par">par {metres(par)} m</div>
+          {/* The world's completable goal: beat the paper pilot and the day is won. */}
+          <div className="par">
+            par {metres(par)} m
+            {s.streak > 0 && <span className="flame"> · 🔥 {s.streak}</span>}
+          </div>
           <div className="hint">Move to steer · click or space to launch</div>
           {/* Dev affordances, worth surfacing while the game is being tested. */}
           <div className="keys">R for another world · T for tuning</div>
@@ -55,10 +61,40 @@ export function Hud({ world, par }: { world: World; par: number }) {
             best {metres(s.best)} m · par {metres(par)} m{s.best >= par ? ' ✓' : ''} ·{' '}
             {s.attempts} {s.attempts === 1 ? 'flight' : 'flights'}
           </div>
+          <Share world={world} />
           <div className="again">Fly again</div>
         </div>
       )}
     </div>
+  )
+}
+
+/**
+ * The share button. data-ui so pressing it does not also restart the flight.
+ * Once clicked, the button is gone and a confirmation stands in its place —
+ * the card is on the clipboard, there is nothing further to press. The state
+ * resets naturally when the results screen unmounts on the next launch.
+ */
+function Share({ world }: { world: World }) {
+  const [copied, setCopied] = useState(false)
+  if (copied) {
+    return (
+      <div className="shareDone" data-ui>
+        Copied to clipboard
+      </div>
+    )
+  }
+  return (
+    <button
+      className="share"
+      data-ui
+      onClick={async () => {
+        const rec = recordOf(savedState(), world.day)
+        if (await copyCard(shareCard(world, rec, savedState().streak))) setCopied(true)
+      }}
+    >
+      Share
+    </button>
   )
 }
 

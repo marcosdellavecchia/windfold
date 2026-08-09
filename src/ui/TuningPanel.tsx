@@ -105,7 +105,7 @@ export function TuningPanel({ day, onDay, world }: { day: number; onDay: (d: num
       </div>
 
       <div className="tuneRow">
-        <label>day / seed</label>
+        <label>world / seed</label>
         <div className="dayNav">
           <button onClick={() => onDay(day - 1)}>-</button>
           <span>{day}</span>

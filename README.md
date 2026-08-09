@@ -30,8 +30,9 @@ npm run build
 Mouse (or drag on touch) steers pitch and roll. Click or space launches, and does an
 instant restart once you are down. `T` opens a live tuning panel for the flight model
 and lets you step through days, jump to a random day, or jump to a random day of a
-chosen biome; `R` rerolls a random world from anywhere. `?day=N` loads a specific day
-directly, and the URL tracks day changes so a world found while testing can be linked.
+chosen biome; `R` rerolls a random world from anywhere. `?world=N` loads a specific
+world directly, and the URL tracks world changes so one found while testing can be
+linked — which is also what makes every share card a challenge link.
 
 `npm run sim:check` runs `src/dev/glideTest.ts`: launch-site pressure, hands-off
 distance versus a thermal-chaining autopilot, trim stability, stall entry and recovery,
@@ -174,18 +175,25 @@ The signature visual: a valley threaded with dozens of glowing arcs.
 
 ## Share card
 
-Plain text to clipboard, plus Web Share API where available.
+Built. Plain text, clipboard only — one click, the button becomes "Copied to
+clipboard", go paste it somewhere.
 
 ```
-✈️  Windfold #142
-1,847 m · 4 flights
+✈️ Windfold #142 · gloaming coastal
+1,847 m · 4 flights · par ✓ 🛬
 
-▁▂▄▆█▇▅▃▂▁▁
-🟦 Top 12% today
-Streak: 6 🔥
+▁▂▄▆█▇▅▃▂▁▁▂
+🔥 6
 
-windfold.app
+https://windfold.vercel.app/?world=142
 ```
+
+The world's name is on the card, and the URL — full scheme, so every chat app
+makes it clickable — opens that exact world: every card is also a challenge
+link. Par gives the card a verdict the way Wordle's
+X/6 does, comparable between players whose distances differ wildly; 🛬 marks a
+best flight that ended in a gentle landing. The percentile line ("Top 12%
+today") arrives with the backend.
 
 - The block strip is the **altitude profile of your best flight**, derived from its recorded path. It's a picture of how you flew, which is what makes it worth sharing.
 - Attempt count sits next to the distance. It's the honest context for the number, and it's the thing friends will compete on once distances converge.
@@ -638,6 +646,27 @@ broadleaf canopy toward the bloom colour, autumn toward the sun's gold — appli
 through the same helper the terrain paints its forest tint with, so the trees and
 the wooded ground under them turn together.
 
+**The ritual.** Build step 5, and the moment the game became a daily one rather
+than a beautiful toy: before this, a refresh erased everything. Records now
+persist per *world* in localStorage — best, attempts, the best flight's
+altitude profile, whether par fell and whether it ended in a landing — because
+a share-card link opens someone else's world as an expedition, and a best on it
+is worth keeping. Only today's world advances the streak, though; the ritual is
+daily even when the flying is not. The attempt marker closes the old spec gap:
+counted at launch, refreshed every two seconds in flight, reconciled on the
+next load, so refreshing mid-flight burns the attempt at its last recorded
+sample. A tab left open overnight picks up the new world on refocus — never
+mid-flight, and never when a specific world was opened on purpose. And the
+player-facing language dropped "day" for "world": `?world=N`, "World 219 ·
+gloaming coastal", because nobody experiences a day number.
+
+One thing the harness could never have caught, found by driving the real
+page: the HUD passes pointer events through to the canvas so the screen stays
+steerable, which made the share button silently unclickable until it opted
+back in. Sharing is clipboard-only by decision — no native share sheet; the
+player is pasting into a chat, and one click that says "Copied to clipboard"
+is the whole job.
+
 **Music.** Synthesised in the browser, not streamed — same reasoning as the terrain.
 Rule 5 forbids third-party requests and the load budget is three seconds; a few minutes
 of ambient piano is a megabyte and a round trip, whereas this is a few kilobytes of code
@@ -684,7 +713,8 @@ is −29 dBFS RMS / −14 dBFS peak: present, but under conversation level.
 4. **Flight recording, own-attempt ghosts, backend, other players' ghosts.**
    Recording and own-attempt ghosts are done — the remaining half of this step is
    the backend and everyone else's trails.
-5. **Share card, streak, best-and-attempts screen.**
+5. ~~**Share card, streak, best-and-attempts screen.**~~ Done, minus the
+   percentile line, which needs the backend.
 
 ---
 

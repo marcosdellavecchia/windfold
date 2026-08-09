@@ -12,6 +12,8 @@ import {
 import type { World } from '../sim/world'
 import { Flight } from '../sim/flight'
 import { sampleGradient } from '../sim/terrain'
+import { dayNumber } from '../sim/world'
+import { noteFlight, noteLaunch, recordOf, savedState, writeMarker } from '../game/persist'
 import { Ghosts, type GhostData } from './Ghosts'
 import { TUNING } from '../sim/tuning'
 import { surfaceHeight } from '../sim/terrain'
@@ -31,7 +33,7 @@ import { Thermals } from './Thermals'
 import { PaperPlane } from './PaperPlane'
 import { Trail } from './Trail'
 
-export function Scene({ world }: { world: World }) {
+export function Scene({ world, par }: { world: World; par: number }) {
   const planeRef = useRef<Group>(null)
   const trail = useMemo(() => new Trail([0.55, 0.9, 1.0]), [])
   useEffect(() => () => trail.dispose(), [trail])
@@ -65,13 +67,14 @@ export function Scene({ world }: { world: World }) {
       <primitive object={trail.object} />
       <PaperPlane ref={planeRef} world={world} />
 
-      <Simulation world={world} planeRef={planeRef} trail={trail} />
+      <Simulation world={world} par={par} planeRef={planeRef} trail={trail} />
     </>
   )
 }
 
 interface SimProps {
   world: World
+  par: number
   planeRef: React.RefObject<Group | null>
   trail: Trail
 }
@@ -79,7 +82,7 @@ interface SimProps {
 /** How many previous attempts stay on screen, besides the best. */
 const GHOST_ATTEMPTS = 5
 
-function Simulation({ world, planeRef, trail }: SimProps) {
+function Simulation({ world, par, planeRef, trail }: SimProps) {
   const camera = useThree((s) => s.camera)
 
   const flight = useMemo(
@@ -88,6 +91,10 @@ function Simulation({ world, planeRef, trail }: SimProps) {
   )
 
   const stats = useRef({ best: 0, attempts: 0 })
+  // The session's saved state — records per world, the streak, the in-flight
+  // marker. One instance, shared with the HUD's share card.
+  const saved = useMemo(() => savedState(), [])
+  const markerTimer = useRef(0)
   const [ghosts, setGhosts] = useState<GhostData>({ attempts: [], best: null })
 
   // The plane's shadow: a soft dark blob hugging the terrain below. Not a
@@ -120,30 +127,41 @@ function Simulation({ world, planeRef, trail }: SimProps) {
   })
 
   useEffect(() => {
+    const launch = () => {
+      // Counted and persisted before the first physics tick — bailing out
+      // must never be cheaper than crashing. First launch of the day also
+      // advances the streak.
+      noteLaunch(saved, world.day, dayNumber())
+      stats.current.attempts = recordOf(saved, world.day).attempts
+      writeHud({ streak: saved.streak })
+    }
     setCommitHandler(() => {
       if (flight.phase === 'ready') {
         flight.launch()
-        stats.current.attempts++
+        launch()
       } else if (flight.phase === 'down') {
         // Instant restart. The world is already resident, so this is a state
         // reset and nothing more — no fade, no confirmation.
         flight.reset()
         trail.clear()
         flight.launch()
-        stats.current.attempts++
+        launch()
         writeHud({ newBest: false })
       }
     })
     return () => setCommitHandler(() => {})
-  }, [flight, trail])
+  }, [flight, trail, world, saved])
 
-  // Reset the session when the world changes (dev-time seed switching).
+  // A world change loads that world's record — the best and attempt count of
+  // a linked or revisited world carry across sessions.
   useEffect(() => {
-    stats.current = { best: 0, attempts: 0 }
+    const rec = recordOf(saved, world.day)
+    stats.current = { best: rec.best, attempts: rec.attempts }
+    writeHud({ best: rec.best, attempts: rec.attempts, streak: saved.streak })
     cam.current.ready = false
     trail.clear()
     setGhosts({ attempts: [], best: null })
-  }, [world, trail])
+  }, [world, trail, saved])
 
   const scratch = useMemo(
     () => ({
@@ -165,6 +183,13 @@ function Simulation({ world, planeRef, trail }: SimProps) {
 
     if (flight.phase === 'flying') {
       trail.update(dt, flight.pos.x, flight.pos.y, flight.pos.z)
+      // The in-flight marker, on a slow cadence: if the page dies mid-flight,
+      // the next load logs this attempt at its last recorded sample.
+      markerTimer.current += dt
+      if (markerTimer.current > 2) {
+        markerTimer.current = 0
+        writeMarker(world.day, flight.distance)
+      }
     }
 
     // --- resolve the end of a flight ---------------------------------------
@@ -174,6 +199,7 @@ function Simulation({ world, planeRef, trail }: SimProps) {
         const d = flight.distance
         const isBest = d > stats.current.best
         if (isBest) stats.current.best = d
+        noteFlight(saved, world.day, d, par, flight.landed, flight.path)
         writeHud({ newBest: isBest, lastDistance: d, landed: flight.landed })
         // Keep the flight's path as a ghost. `reset()` replaces the array rather
         // than clearing it, so holding the reference is safe. The best is held

@@ -276,6 +276,39 @@ canvas {
   color: var(--ui-dim);
 }
 
+/* The share button: quiet, but a real button — this is the one thing on the
+   results screen that must read as clickable rather than ambient text. */
+.result .share {
+  /* The HUD passes pointer events through to the canvas so the whole screen
+     stays steerable; the one real button has to opt back in. */
+  pointer-events: auto;
+  margin-top: 18px;
+  padding: 7px 22px;
+  font: inherit;
+  font-size: 13px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.92);
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.result .share:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* Takes the button's place after the click — same footprint, no layout jump. */
+.result .shareDone {
+  margin-top: 18px;
+  padding: 8px 22px;
+  font-size: 13px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #7ef7c4;
+}
+
 .result .again {
   margin-top: 30px;
   font-size: 13px;
