@@ -348,6 +348,41 @@ canvas {
   outline-offset: 2px;
 }
 
+/* ----------------------------------------------------- world transition ---- */
+
+.veil {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  pointer-events: auto;
+  background: rgba(8, 11, 18, 0.42);
+  backdrop-filter: blur(26px) saturate(1.15);
+  -webkit-backdrop-filter: blur(26px) saturate(1.15);
+  opacity: 0;
+  transition: opacity 0.24s ease-out;
+}
+
+.veil.show {
+  opacity: 1;
+}
+
+/* Lifting off the new world is slower than covering the old one — arrivals
+   deserve more ceremony than departures. */
+.veil.lift {
+  opacity: 0;
+  transition: opacity 0.85s ease-in;
+}
+
+.veil .veilText {
+  font-size: 13px;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.75);
+  animation: pulse 2.2s ease-in-out infinite;
+}
+
 /* --------------------------------------------------------- tuning ui ---- */
 
 .tuneHint {

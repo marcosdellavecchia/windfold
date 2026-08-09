@@ -2,11 +2,10 @@
 
 > A daily paper-plane gliding game in the browser. One landscape a day, as many flights as you like, best distance is your record. *Fly windfolded.*
 
-**Status:** build steps 1 and 2 done. Flight model, a 12 km procedural world with seven
-biomes, forests, lakes and sea, cumulus, birds, seeded daily worlds, air (wind /
-thermals / ridge lift / thermal streets), chase camera, live wake trail, generated
-ambient music, and the crash → retry loop all work. Everything from step 3 onward is unbuilt: no backend, no ghost trails from other
-players, no share card, no streak, no persistence of any kind.
+**Status:** the whole solo game is built — flight model, a 12 km procedural world
+with seven biomes, seeded daily worlds, air, par, landings, own-attempt ghosts,
+localStorage persistence, and the share card. What remains is the backend half:
+other players' ghost trails and the percentile line. A streak was built and cut.
 See [Built so far](#built-so-far).
 
 **Name:** `Windfold` — decided. The working title was `Paper Trail`, dropped because
@@ -74,7 +73,7 @@ These define the product. Features that violate them don't get built.
 3. **Ghost trails.** You see the flight paths of other players who flew today, drawn as glowing 3D ribbons in cyan, purple, and pink. Your own earlier attempts show too, faintly.
 4. **Wordle-style share card** on completion — plain text, emoji, copyable, survives being pasted into WhatsApp.
 5. **No accounts. No signup. No tracking.** No analytics scripts, no third-party requests, no email capture, no ads.
-6. **Streak lives in `localStorage` only.** If the user clears browser data, the streak is gone. The UI says so plainly. It is never backed up server-side.
+6. **No streak.** One was built and cut before launch: the world and the card are what earn the return visit, and a guilt counter that dies with cleared browser data was more stress than reward in a game whose whole promise is relaxing.
 7. **Zero onboarding.** No tutorial, no modal, no cookie banner. Controls must be discoverable in about two seconds.
 
 ---
@@ -83,7 +82,7 @@ These define the product. Features that violate them don't get built.
 
 Land on the page → see the landscape and today's ghost trails → press to launch →
 glide → crash or land → distance in metres, compared against your best → **fly again**
-or stop → share card + streak → come back tomorrow.
+or stop → share card → come back tomorrow.
 
 **Score is a single number: the longest distance in metres you flew today —
 path flown, not displacement. Alongside it, the number of flights it took, and
@@ -183,7 +182,6 @@ clipboard", go paste it somewhere.
 1,847 m · 4 flights · par ✓ 🛬
 
 ▁▂▄▆█▇▅▃▂▁▁▂
-🔥 6
 
 https://windfold.vercel.app/?world=142
 ```
@@ -206,7 +204,7 @@ today") arrives with the backend.
 
 | Data | Where | Lifetime |
 | --- | --- | --- |
-| Best distance, attempt count, best flight's altitude profile, streak, last day played | `localStorage` | Until the user clears browser data |
+| Best distance, attempt count, best flight's altitude profile, per world | `localStorage` | Until the user clears browser data |
 | Music on/off preference | `localStorage` | Until the user clears browser data |
 | Best distance + attempt count + opaque per-day token | D1 | ~7 days, then purged |
 | Gzipped trail of the best flight | R2 | ~7 days, then purged |
@@ -651,14 +649,22 @@ than a beautiful toy: before this, a refresh erased everything. Records now
 persist per *world* in localStorage — best, attempts, the best flight's
 altitude profile, whether par fell and whether it ended in a landing — because
 a share-card link opens someone else's world as an expedition, and a best on it
-is worth keeping. Only today's world advances the streak, though; the ritual is
-daily even when the flying is not. The attempt marker closes the old spec gap:
+is worth keeping. The attempt marker closes the old spec gap:
 counted at launch, refreshed every two seconds in flight, reconciled on the
 next load, so refreshing mid-flight burns the attempt at its last recorded
 sample. A tab left open overnight picks up the new world on refocus — never
 mid-flight, and never when a specific world was opened on purpose. And the
 player-facing language dropped "day" for "world": `?world=N`, "World 219 ·
 gloaming coastal", because nobody experiences a day number.
+
+Changing worlds got a veil: the live frame blurs away under dark glass with
+"Imagining new worlds…", the second-long build runs while it is opaque, and
+it lifts slowly off the new world. Two timing lessons inside it, both
+measured: a removal timer burns down *during* the main-thread block, so the
+veil unmounts on `transitionend` — an event that can only fire after the fade
+truly played; and the real stall is not the React commit but the scene rebuild
+that follows on the frame loop, so the veil holds until the scene reports the
+new world's first rendered frame rather than lifting on a clock.
 
 One thing the harness could never have caught, found by driving the real
 page: the HUD passes pointer events through to the canvas so the screen stays
@@ -713,8 +719,9 @@ is −29 dBFS RMS / −14 dBFS peak: present, but under conversation level.
 4. **Flight recording, own-attempt ghosts, backend, other players' ghosts.**
    Recording and own-attempt ghosts are done — the remaining half of this step is
    the backend and everyone else's trails.
-5. ~~**Share card, streak, best-and-attempts screen.**~~ Done, minus the
-   percentile line, which needs the backend.
+5. ~~**Share card, best-and-attempts screen.**~~ Done, minus the percentile
+   line, which needs the backend. The streak was built here and cut — see the
+   design rules.
 
 ---
 
@@ -752,9 +759,11 @@ graduate from flavour to tiebreaker.
 distribution so the day's best lines are visible and learnable. Cost: top routes get
 copied — arguably a feature for a shared-puzzle game, but a real fork.
 
-**Streak with no server backup.** Rule 6 means a cleared browser wipes a 200-day
-streak with no recourse. That's the honest cost of no accounts, and it's the right
-trade, but expect complaints and decide now that the answer is "yes, that's the deal."
+**Streak with no server backup — resolved by deletion.** The streak was built,
+shipped to the splash and the card, and then cut: a counter that punishes a missed
+day is a guilt mechanic in a game whose promise is relaxation, and one that dies
+with cleared browser data would have been the top complaint forever. The card
+sells the flight, not the habit; the world is the reason to come back.
 
 ---
 

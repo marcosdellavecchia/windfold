@@ -3,13 +3,11 @@ import type { FlightSample } from '../sim/flight'
 /**
  * Everything the game remembers between visits, all of it in localStorage per
  * the design rules: no accounts, no server, and if the browser data goes, the
- * streak goes with it — the UI says so plainly.
+ * records go with it — that is the honest cost of no signup.
  *
  * Records are kept per *world*, not just for today: a share-card link opens
  * someone else's world as an expedition, and your best on it is worth keeping.
- * Only today's world advances the streak, though — the ritual is daily even
- * when the flying is not. Old records are trimmed so thirty visits don't silt
- * up the store.
+ * Old records are trimmed so thirty visits don't silt up the store.
  */
 export interface WorldRecord {
   best: number
@@ -21,9 +19,6 @@ export interface WorldRecord {
 }
 
 export interface SavedState {
-  streak: number
-  /** The last day number on which the streak advanced. */
-  lastStreakDay: number
   records: Record<string, WorldRecord>
 }
 
@@ -50,13 +45,13 @@ export function loadState(): SavedState {
     const raw = localStorage.getItem(KEY)
     if (raw) {
       const s = JSON.parse(raw) as SavedState
-      if (typeof s.streak === 'number' && s.records) return s
+      if (s.records && typeof s.records === 'object') return { records: s.records }
     }
   } catch {
     // Corrupt or blocked storage reads as a fresh start; the game must never
     // refuse to fly over a bookkeeping problem.
   }
-  return { streak: 0, lastStreakDay: -1, records: {} }
+  return { records: {} }
 }
 
 function saveState(s: SavedState) {
@@ -81,16 +76,11 @@ export function recordOf(s: SavedState, world: number): WorldRecord {
 
 /**
  * An attempt is counted the moment the plane launches — written here before
- * the first physics tick, so refreshing mid-flight still burns it. The streak
- * advances on the first launch of the day on *today's* world.
+ * the first physics tick, so refreshing mid-flight still burns it.
  */
-export function noteLaunch(s: SavedState, world: number, todaysWorld: number): SavedState {
+export function noteLaunch(s: SavedState, world: number): SavedState {
   const rec = recordOf(s, world)
   s.records[world] = { ...rec, attempts: rec.attempts + 1 }
-  if (world === todaysWorld && s.lastStreakDay !== todaysWorld) {
-    s.streak = s.lastStreakDay === todaysWorld - 1 ? s.streak + 1 : 1
-    s.lastStreakDay = todaysWorld
-  }
   saveState(s)
   return s
 }

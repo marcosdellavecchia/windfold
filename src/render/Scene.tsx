@@ -12,7 +12,6 @@ import {
 import type { World } from '../sim/world'
 import { Flight } from '../sim/flight'
 import { sampleGradient } from '../sim/terrain'
-import { dayNumber } from '../sim/world'
 import { noteFlight, noteLaunch, recordOf, savedState, writeMarker } from '../game/persist'
 import { Ghosts, type GhostData } from './Ghosts'
 import { TUNING } from '../sim/tuning'
@@ -33,7 +32,16 @@ import { Thermals } from './Thermals'
 import { PaperPlane } from './PaperPlane'
 import { Trail } from './Trail'
 
-export function Scene({ world, par }: { world: World; par: number }) {
+export function Scene({
+  world,
+  par,
+  onWorldReady,
+}: {
+  world: World
+  par: number
+  /** Fired on the first rendered frame of each world — the veil lifts on it. */
+  onWorldReady?: () => void
+}) {
   const planeRef = useRef<Group>(null)
   const trail = useMemo(() => new Trail([0.55, 0.9, 1.0]), [])
   useEffect(() => () => trail.dispose(), [trail])
@@ -67,7 +75,7 @@ export function Scene({ world, par }: { world: World; par: number }) {
       <primitive object={trail.object} />
       <PaperPlane ref={planeRef} world={world} />
 
-      <Simulation world={world} par={par} planeRef={planeRef} trail={trail} />
+      <Simulation world={world} par={par} planeRef={planeRef} trail={trail} onWorldReady={onWorldReady} />
     </>
   )
 }
@@ -77,12 +85,13 @@ interface SimProps {
   par: number
   planeRef: React.RefObject<Group | null>
   trail: Trail
+  onWorldReady?: () => void
 }
 
 /** How many previous attempts stay on screen, besides the best. */
 const GHOST_ATTEMPTS = 5
 
-function Simulation({ world, par, planeRef, trail }: SimProps) {
+function Simulation({ world, par, planeRef, trail, onWorldReady }: SimProps) {
   const camera = useThree((s) => s.camera)
 
   const flight = useMemo(
@@ -91,8 +100,8 @@ function Simulation({ world, par, planeRef, trail }: SimProps) {
   )
 
   const stats = useRef({ best: 0, attempts: 0 })
-  // The session's saved state — records per world, the streak, the in-flight
-  // marker. One instance, shared with the HUD's share card.
+  // The session's saved state — records per world, the in-flight marker.
+  // One instance, shared with the HUD's share card.
   const saved = useMemo(() => savedState(), [])
   const markerTimer = useRef(0)
   const [ghosts, setGhosts] = useState<GhostData>({ attempts: [], best: null })
@@ -129,11 +138,9 @@ function Simulation({ world, par, planeRef, trail }: SimProps) {
   useEffect(() => {
     const launch = () => {
       // Counted and persisted before the first physics tick — bailing out
-      // must never be cheaper than crashing. First launch of the day also
-      // advances the streak.
-      noteLaunch(saved, world.day, dayNumber())
+      // must never be cheaper than crashing.
+      noteLaunch(saved, world.day)
       stats.current.attempts = recordOf(saved, world.day).attempts
-      writeHud({ streak: saved.streak })
     }
     setCommitHandler(() => {
       if (flight.phase === 'ready') {
@@ -157,7 +164,7 @@ function Simulation({ world, par, planeRef, trail }: SimProps) {
   useEffect(() => {
     const rec = recordOf(saved, world.day)
     stats.current = { best: rec.best, attempts: rec.attempts }
-    writeHud({ best: rec.best, attempts: rec.attempts, streak: saved.streak })
+    writeHud({ best: rec.best, attempts: rec.attempts })
     cam.current.ready = false
     trail.clear()
     setGhosts({ attempts: [], best: null })
@@ -175,7 +182,17 @@ function Simulation({ world, par, planeRef, trail }: SimProps) {
     [],
   )
 
+  const reportedWorld = useRef<World | null>(null)
+
   useFrame((_, rawDt) => {
+    // The first frame of a new world: everything heavy — heightfield, terrain
+    // geometry, tree scatter — has already happened by the time this runs, so
+    // this is the moment the between-worlds veil can safely lift.
+    if (reportedWorld.current !== world) {
+      reportedWorld.current = world
+      onWorldReady?.()
+    }
+
     const dt = Math.min(rawDt, 1 / 15)
     const axis = readAxis(dt)
 

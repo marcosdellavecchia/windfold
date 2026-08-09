@@ -21,8 +21,6 @@ export interface HudState {
   lastDistance: number
   /** Whether the last flight ended in a gentle touchdown rather than a crash. */
   landed: boolean
-  /** Consecutive days played, localStorage only, gone if the browser data goes. */
-  streak: number
 }
 
 const HUD_HZ = 12
@@ -40,7 +38,6 @@ const draft: HudState = {
   newBest: false,
   lastDistance: 0,
   landed: false,
-  streak: 0,
 }
 
 let snapshot: HudState = { ...draft }

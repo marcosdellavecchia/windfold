@@ -1,5 +1,41 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { hudDraft } from './state'
+
+/**
+ * The between-worlds veil: the live frame blurs away under a dark glass, the
+ * heavy build runs while it is opaque, and it lifts slowly off the new world.
+ * Mounted transparent and shown one frame later, so the fade-in actually
+ * animates; data-ui plus pointer-events so a click during the swap cannot
+ * launch a flight into a world that is about to vanish.
+ */
+function WorldVeil({ phase, onDone }: { phase: 'in' | 'out'; onDone: () => void }) {
+  const [shown, setShown] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (phase === 'in') {
+      const id = requestAnimationFrame(() => setShown(true))
+      return () => cancelAnimationFrame(id)
+    }
+    // Unmount when the lift transition has actually played, not on a clock:
+    // a timer started before the build burns down *during* the block and
+    // yanks the veil off 14 ms after the world appears (measured). The
+    // transitionend event can only fire once the fade has truly run.
+    setShown(false)
+    const el = ref.current
+    const done = () => onDone()
+    el?.addEventListener('transitionend', done, { once: true })
+    const fallback = window.setTimeout(done, 3000)
+    return () => {
+      el?.removeEventListener('transitionend', done)
+      window.clearTimeout(fallback)
+    }
+  }, [phase, onDone])
+  return (
+    <div ref={ref} className={`veil${shown ? ' show' : ''}${phase === 'out' ? ' lift' : ''}`} data-ui>
+      <div className="veilText">Imagining new worlds…</div>
+    </div>
+  )
+}
 import { Canvas } from '@react-three/fiber'
 import { buildWorld, dayNumber } from './sim/world'
 import { computePar } from './sim/par'
@@ -27,16 +63,50 @@ export default function App() {
   // ~100 ms at world build, deterministic, no server involved.
   const par = useMemo(() => computePar(world), [world])
 
-  // Keep ?world= in sync when the world is changed from the panel or the R
-  // shortcut, so any world found while testing survives a reload and can be
-  // linked to.
+  // Swapping worlds blocks the main thread for the better part of a second —
+  // heightfield, vertex colours, the paper pilot's par flight. Rather than
+  // freeze mid-frame, a veil blurs the current world away first, the build
+  // happens under it, and it lifts slowly off the new one. The text sells the
+  // pause as the game thinking rather than the page hanging.
+  const [veil, setVeil] = useState<{ day: number; phase: 'in' | 'out'; byUser: boolean } | null>(null)
+
   const changeDay = useCallback((d: number) => {
     overridden.current = true
-    setDay(d)
-    const url = new URL(window.location.href)
-    url.searchParams.set('world', String(d))
-    window.history.replaceState(null, '', url)
+    setVeil({ day: d, phase: 'in', byUser: true })
   }, [])
+
+  useEffect(() => {
+    if (!veil || veil.phase !== 'in') return
+    // Give the veil time to fade fully opaque before the build stalls paint.
+    // It stays opaque until the scene reports the new world's first rendered
+    // frame — the React commit is fast, but the real stall is the scene
+    // rebuild that follows on the frame loop, and lifting on a clock meant
+    // fading out over the *old* world (measured).
+    const t = window.setTimeout(() => {
+      setDay(veil.day)
+      if (veil.byUser) {
+        const url = new URL(window.location.href)
+        url.searchParams.set('world', String(veil.day))
+        window.history.replaceState(null, '', url)
+      }
+    }, 300)
+    // Failsafe: never leave the player behind an opaque veil.
+    const failsafe = window.setTimeout(
+      () => setVeil((v) => (v && v.phase === 'in' ? { ...v, phase: 'out' } : v)),
+      6000,
+    )
+    return () => {
+      window.clearTimeout(t)
+      window.clearTimeout(failsafe)
+    }
+  }, [veil])
+
+  // The scene's first frame with the new world already resident.
+  const onWorldReady = useCallback(() => {
+    setVeil((v) => (v && v.phase === 'in' ? { ...v, phase: 'out' } : v))
+  }, [])
+
+  const veilDone = useCallback(() => setVeil(null), [])
 
   // Midnight rollover: a tab left open overnight gets the new world when it
   // next matters — on refocus or on a slow tick — but never mid-flight, and
@@ -46,7 +116,7 @@ export default function App() {
       if (overridden.current) return
       if (hudDraft.phase === 'flying') return
       const today = dayNumber()
-      if (today !== day) setDay(today)
+      if (today !== day) setVeil({ day: today, phase: 'in', byUser: false })
     }
     const onVisible = () => document.visibilityState === 'visible' && check()
     document.addEventListener('visibilitychange', onVisible)
@@ -72,9 +142,10 @@ export default function App() {
         // 1.5 m anyway — the motes fade themselves out inside that.
         camera={{ fov: TUNING.fov, near: 1.2, far: 20000, position: [0, 400, 0] }}
       >
-        <Scene world={world} par={par} />
+        <Scene world={world} par={par} onWorldReady={onWorldReady} />
       </Canvas>
       <div className="dream" aria-hidden="true" />
+      {veil && <WorldVeil phase={veil.phase} onDone={veilDone} />}
       <Hud world={world} par={par} />
       <AudioToggle muted={music.muted} onToggle={music.toggle} />
       <TuningPanel day={day} onDay={changeDay} world={world} />

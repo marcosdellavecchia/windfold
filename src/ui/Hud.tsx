@@ -38,10 +38,7 @@ export function Hud({ world, par }: { world: World; par: number }) {
             {Math.round(world.air.windSpeed)} m/s
           </div>
           {/* The world's completable goal: beat the paper pilot and the day is won. */}
-          <div className="par">
-            par {metres(par)} m
-            {s.streak > 0 && <span className="flame"> · 🔥 {s.streak}</span>}
-          </div>
+          <div className="par">par {metres(par)} m</div>
           <div className="hint">Move to steer · click or space to launch</div>
           {/* Dev affordances, worth surfacing while the game is being tested. */}
           <div className="keys">R for another world · T for tuning</div>
@@ -90,7 +87,7 @@ function Share({ world }: { world: World }) {
       data-ui
       onClick={async () => {
         const rec = recordOf(savedState(), world.day)
-        if (await copyCard(shareCard(world, rec, savedState().streak))) setCopied(true)
+        if (await copyCard(shareCard(world, rec))) setCopied(true)
       }}
     >
       Share

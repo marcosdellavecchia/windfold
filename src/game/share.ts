@@ -10,14 +10,15 @@ import type { WorldRecord } from './persist'
  * how you flew, with every thermal climb visible in it. Par gives the card a
  * verdict — beat the paper pilot or not — which makes cards comparable even
  * between players whose distances differ wildly. The URL names the exact
- * world, so every card is also a challenge link.
+ * world, so every card is also a challenge link. No streak: it was built and
+ * cut — the card sells the flight, not the habit.
  */
 const BLOCKS = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█']
 
 /** Where the game lives. Full scheme, so the card's last line is a real link. */
 const SITE = 'https://windfold.vercel.app'
 
-export function shareCard(world: World, rec: WorldRecord, streak: number): string {
+export function shareCard(world: World, rec: WorldRecord): string {
   const m = Math.round(rec.best).toLocaleString('en-US')
   const flights = `${rec.attempts} ${rec.attempts === 1 ? 'flight' : 'flights'}`
   const par = rec.parBeaten ? 'par ✓' : 'par ✗'
@@ -30,7 +31,6 @@ export function shareCard(world: World, rec: WorldRecord, streak: number): strin
   if (rec.profile.length > 0) {
     lines.push('', rec.profile.map((v) => BLOCKS[Math.max(0, Math.min(7, v))]).join(''))
   }
-  if (streak > 0) lines.push(`\u{1F525} ${streak}`)
   lines.push('', `${SITE}/?world=${world.day}`)
   return lines.join('\n')
 }
