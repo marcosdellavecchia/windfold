@@ -94,6 +94,13 @@ export function Water({ world }: { world: World }) {
         // same clock — so a patch of shade crosses the shoreline in one piece.
         uCloudWind: { value: new Vector2(world.air.windX, world.air.windZ) },
         uCloudSeed: { value: cloudShadowSeed(world.seed) },
+        // Swell runs along the day's wind; how much sea-state the day earns.
+        uSwell: {
+          value: new Vector2(world.air.windX, world.air.windZ).normalize(),
+        },
+        uWindAmt: { value: Math.min(world.air.windSpeed / 5.5, 1) },
+        // Surf belongs to the sea. Lakes get a gentle lap of the same code.
+        uFoam: { value: world.biome === 'coastal' || world.biome === 'archipelago' ? 1.0 : 0.35 },
       },
       vertexShader: /* glsl */ `
         varying vec3 vWorld;
@@ -124,11 +131,22 @@ export function Water({ world }: { world: World }) {
         uniform vec2 uHeightUv;
         uniform vec2 uCloudWind;
         uniform float uCloudSeed;
+        uniform vec2 uSwell;
+        uniform float uWindAmt;
+        uniform float uFoam;
         varying vec3 vWorld;
         varying float vFog;
         varying float vDist;
 
         ${CLOUD_SHADOW_GLSL}
+
+        // The sea's long waves: one swell train along the wind plus a weaker
+        // harmonic, ~310 m crest to crest, marching at swell speed. Long enough
+        // to stay legible far beyond where the chop has to fade out.
+        float swellAt(vec2 p, float t) {
+          float u = dot(p, uSwell);
+          return sin(u * 0.0203 - t * 0.185) + 0.35 * sin(u * 0.041 - t * 0.31 + 1.7);
+        }
 
         // Cheap crossed-wave surface. Three scales of ripple is enough to read as
         // texture from 200 m up, and it costs no texture fetch.
@@ -157,6 +175,14 @@ export function Water({ world }: { world: World }) {
           float terrain = (hg.r * 65280.0 + hg.g * 255.0) / 65535.0 * uHeightRange + uHeightMin;
           float depth = uWaterLevel - terrain;
 
+          // Beyond the map the height texture clamps to its border row, which
+          // extrudes the last coastline outward as streaks of phantom shallows
+          // and shore fade running to the horizon. Past the border is open
+          // ocean; call it deep and be done.
+          float inMap = (1.0 - smoothstep(${(HALF_WORLD * 0.93).toFixed(1)}, ${(HALF_WORLD * 0.985).toFixed(1)}, abs(vWorld.x)))
+                      * (1.0 - smoothstep(${(HALF_WORLD * 0.93).toFixed(1)}, ${(HALF_WORLD * 0.985).toFixed(1)}, abs(vWorld.z)));
+          depth = mix(1000.0, depth, inMap);
+
           // Perturb the surface normal by the wave slope.
           float e = 6.0;
           float w0 = waves(vWorld.xz, uTime);
@@ -168,7 +194,16 @@ export function Water({ world }: { world: World }) {
           // because that detail was never legible at range anyway. Shorter waves
           // alias sooner, so this fades sooner than it used to.
           float ripple = 4.0 * (1.0 - smoothstep(260.0, 1400.0, vDist));
-          vec3 n = normalize(vec3(-wx * ripple, 1.0, -wz * ripple));
+
+          // The swell tilts the same normal the chop perturbs, but being ~15x
+          // longer it stays legible far past where the chop must fade — long
+          // parallel bands marching downwind is most of what makes open water
+          // read as sea instead of resin.
+          float s0 = swellAt(vWorld.xz, uTime);
+          float sx = swellAt(vWorld.xz + vec2(e, 0.0), uTime) - s0;
+          float sz = swellAt(vWorld.xz + vec2(0.0, e), uTime) - s0;
+          float swellAmp = 3.6 * (1.0 - smoothstep(500.0, 3000.0, vDist)) * (0.3 + 0.7 * uFoam);
+          vec3 n = normalize(vec3(-wx * ripple - sx * swellAmp, 1.0, -wz * ripple - sz * swellAmp));
 
           // Looking straight down you see into the water; at a grazing angle the
           // surface turns into a mirror of the sky. That flip is most of what sells
@@ -183,6 +218,12 @@ export function Water({ world }: { world: World }) {
           // colour where it is deeper or shallower, and that does not move at all.
           float mottle = sin(vWorld.x * 0.0009) * sin(vWorld.z * 0.0011);
           vec3 body = mix(uDeep, uShallow, 0.36 + mottle * 0.16);
+          // Swell you can actually see: the long bands brighten and darken the
+          // surface a few percent as they pass. The lake-pulse lesson still
+          // holds — that bug was a basin breathing in place; these are bands
+          // travelling at swell speed, scaled to the sea and nearly absent on
+          // lakes, and they die well before the horizon's corduroy zone.
+          body *= 1.0 + s0 * 0.05 * uFoam * (1.0 - smoothstep(1800.0, 4200.0, vDist));
           // True shallows off the height texture, layered over the mottle: the
           // last dozen metres of depth lighten toward the shore, which is what
           // makes a coast read as shelving instead of cut with a knife.
@@ -196,6 +237,28 @@ export function Water({ world }: { world: World }) {
           vec3 h = normalize(normalize(uSunDir) + viewDir);
           float spec = pow(max(dot(n, h), 0.0), 220.0);
           col += uSun * spec * 1.6;
+
+          // Whitecaps where chop and swell crest together — kept close, where
+          // individual caps are readable, and only as much wind as the day has.
+          float crest = smoothstep(0.62, 1.15, w0 + s0 * 0.45) * (1.0 - smoothstep(200.0, 800.0, vDist));
+          col += mix(uSky, vec3(1.0), 0.4) * crest * uWindAmt * 0.12;
+
+          // Surf. Two regimes, split by distance, because the failure modes
+          // differ. Near: a breathing band over the last metres of depth, its
+          // pulse riding the swell phase so the edge crawls along the beach.
+          // Far: the band widens with distance so it never thins below a few
+          // pixels, and the animation freezes entirely — a distant surf line
+          // reads as a pale static rim from a glider, and an animated
+          // sub-pixel band is exactly the shaking-coast bug reborn.
+          float bandW = 4.5 + vDist * 0.012;
+          float foamBand = pow(1.0 - smoothstep(0.3, bandW, depth), 1.5);
+          float breathe = mix(
+            0.55 + 0.45 * sin(uTime * 1.1 + s0 * 2.2 + depth * 1.6),
+            0.6,
+            smoothstep(350.0, 1000.0, vDist)
+          );
+          float foam = foamBand * breathe * uFoam * (1.0 - smoothstep(1600.0, 3400.0, vDist));
+          col = mix(col, mix(uShallow, vec3(1.0), 0.55), foam * 0.45);
 
           col *= cloudShadow(vWorld.xz, uCloudWind, uTime, uCloudSeed);
           col = mix(col, uFog, vFog);

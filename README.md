@@ -418,6 +418,26 @@ where they belong: perturbing the normal for the fresnel and the sun glitter. Re
 water seen from an aircraft does not change colour as a wave passes. It changes colour
 where it is deeper, and that does not move at all.
 
+The sea got its state in a later pass, all of it in the one fragment shader. A
+long swell train runs along the day's wind — ~310 m crest to crest with a weaker
+harmonic — tilting the same normal the chop perturbs, plus a few percent of
+travelling brightness in the bands themselves, which is what makes the swell
+*visible* rather than theoretical. (The lake-pulse lesson still holds: that bug
+was a basin breathing in place; these are bands moving at swell speed, scaled to
+the sea biomes and dying before the horizon.) Whitecaps appear where chop and
+swell crest together, close in and wind-scaled. Surf runs in two regimes split
+by distance, because the failure modes differ: near, a band of foam breathes
+over the last metres of depth, pulsed by the swell phase so the edge crawls
+along the beach; far, the band widens with distance so it never thins below a
+few pixels and its animation freezes entirely. The first build animated a thin
+band at every distance and put per-pixel chop into its phase, and the coasts
+shook — the shaking-shoreline bug reborn in a new suit, one pass after it was
+fixed. The strip-meter now reads distant coasts at exactly the no-surf
+baseline. And the outer ocean lost its phantom coasts: beyond the map border
+the height texture clamps to its edge row, which extruded the last coastline
+outward as streaks of shallow tint running to the horizon; past the border
+everything is now simply deep.
+
 The waterline was the other fault, and it was not the one it looked like. A shaking,
 stair-stepped coast pattern-matches to z-fighting, but offsetting the water's depth
 did nothing measurable — because the coast was the raw *depth intersection* of the
