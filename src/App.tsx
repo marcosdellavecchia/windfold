@@ -2,6 +2,24 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { hudDraft } from './state'
 
 /**
+ * What the veil says while the world is being built. Each is something the
+ * builder is genuinely doing under there — terrain, air, flora, sky — so the
+ * pause reads as work rather than as a spinner with a poem on it.
+ */
+const VEIL_LINES = [
+  'Imagining new worlds…',
+  'Folding fresh paper…',
+  'Raising new hills…',
+  'Waking the thermals…',
+  'Hanging the clouds…',
+  'Planting the trees…',
+  'Filling the valleys…',
+  'Calling in the birds…',
+  'Setting the sun low…',
+  'Deciding which way the wind blows…',
+]
+
+/**
  * The between-worlds veil: the live frame blurs away under a dark glass, the
  * heavy build runs while it is opaque, and it lifts slowly off the new world.
  * Mounted transparent and shown one frame later, so the fade-in actually
@@ -10,6 +28,11 @@ import { hudDraft } from './state'
  */
 function WorldVeil({ phase, onDone }: { phase: 'in' | 'out'; onDone: () => void }) {
   const [shown, setShown] = useState(false)
+  // Picked once per mount, and the veil unmounts between swaps — so it is one
+  // line per swap, held steady while `phase` flips from 'in' to 'out' rather
+  // than re-rolling mid-lift. Unseeded on purpose: this is chrome, and tying
+  // it to the world seed would show the same line every time you revisit a day.
+  const [line] = useState(() => VEIL_LINES[Math.floor(Math.random() * VEIL_LINES.length)])
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (phase === 'in') {
@@ -32,7 +55,7 @@ function WorldVeil({ phase, onDone }: { phase: 'in' | 'out'; onDone: () => void 
   }, [phase, onDone])
   return (
     <div ref={ref} className={`veil${shown ? ' show' : ''}${phase === 'out' ? ' lift' : ''}`} data-ui>
-      <div className="veilText">Imagining new worlds…</div>
+      <div className="veilText">{line}</div>
     </div>
   )
 }
