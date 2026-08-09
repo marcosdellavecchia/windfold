@@ -20,7 +20,7 @@ import { RestingPlanes } from './RestingPlanes'
 import { TUNING } from '../sim/tuning'
 import { surfaceHeight } from '../sim/terrain'
 import { rgbToHex } from '../sim/palette'
-import { readAxis, setCommitHandler } from '../input'
+import { isTurboHeld, readAxis, setCommitHandler } from '../input'
 import { flushHud, writeHud } from '../state'
 import { Terrain } from './Terrain'
 import { Water } from './Water'
@@ -109,6 +109,14 @@ interface SimProps {
 /** How many previous attempts stay on screen, besides the best. */
 const GHOST_ATTEMPTS = 5
 
+/**
+ * Extra degrees of field of view at full debug turbo, on top of the speed gain.
+ * Deliberately restrained: turbo already pins the speed gain on its own, so this
+ * only has to say "and this is not normal flight". Pushed further the lens starts
+ * bending the horizon and the frame reads as a fisheye rather than as speed.
+ */
+const TURBO_FOV = 5
+
 function Simulation({ world, par, planeRef, trail, onWorldReady, onFlightRested }: SimProps) {
   const camera = useThree((s) => s.camera)
 
@@ -122,6 +130,8 @@ function Simulation({ world, par, planeRef, trail, onWorldReady, onFlightRested 
   // One instance, shared with the HUD's share card.
   const saved = useMemo(() => savedState(), [])
   const markerTimer = useRef(0)
+  /** Eased 0..1 turbo, for the lens. See the fov block below. */
+  const turboEase = useRef(0)
   const [ghosts, setGhosts] = useState<GhostData>({ attempts: [], best: null })
 
   // The plane's shadow: a soft dark blob hugging the terrain below. Not a
@@ -214,6 +224,13 @@ function Simulation({ world, par, planeRef, trail, onWorldReady, onFlightRested 
     const dt = Math.min(rawDt, 1 / 15)
     const axis = readAxis(dt)
 
+    // Debug turbo, resolved once per frame just before the step it applies to.
+    // The falling edge matters as much as the state: releasing the button has to
+    // hand the aircraft back to the flight model at a speed the model can fly.
+    const turbo = isTurboHeld() && flight.phase === 'flying'
+    if (flight.turbo && !turbo) flight.endTurbo()
+    flight.turbo = turbo
+
     flight.update(dt, axis)
 
     if (flight.phase === 'flying') {
@@ -232,19 +249,26 @@ function Simulation({ world, par, planeRef, trail, onWorldReady, onFlightRested 
     if (phaseChanged) {
       if (flight.phase === 'down') {
         const d = flight.distance
-        const isBest = d > stats.current.best
-        if (isBest) stats.current.best = d
-        noteFlight(saved, world.day, d, par, flight.landed, flight.path)
-        // The flight joins the world's presence: a resting point and its
-        // metres, anonymously. Fire-and-forget — the game never waits on it —
-        // and optimistically, so your own paper is lying there on the next
-        // attempt instead of after a reload.
-        const sign = callsign()
-        postFlight(world.day, flight.pos.x, flight.pos.z, d, flight.landed, sign)
-        onFlightRested?.(
-          { x: flight.pos.x, z: flight.pos.z, landed: flight.landed, name: sign, metres: Math.round(d) },
-          d,
-        )
+        // A flight that used the debug turbo is not a flight. It never touches
+        // the day's record and it never reaches the presence layer — that
+        // odometer is shared with everyone else on this world, and a number put
+        // there cannot be taken back out. The distance still shows on the HUD,
+        // because the point of the tool is to go and look at things.
+        const isBest = !flight.cheated && d > stats.current.best
+        if (!flight.cheated) {
+          if (isBest) stats.current.best = d
+          noteFlight(saved, world.day, d, par, flight.landed, flight.path)
+          // The flight joins the world's presence: a resting point and its
+          // metres, anonymously. Fire-and-forget — the game never waits on it —
+          // and optimistically, so your own paper is lying there on the next
+          // attempt instead of after a reload.
+          const sign = callsign()
+          postFlight(world.day, flight.pos.x, flight.pos.z, d, flight.landed, sign)
+          onFlightRested?.(
+            { x: flight.pos.x, z: flight.pos.z, landed: flight.landed, name: sign, metres: Math.round(d) },
+            d,
+          )
+        }
         writeHud({ newBest: isBest, lastDistance: d, landed: flight.landed })
         // Keep the flight's path as a ghost. `reset()` replaces the array rather
         // than clearing it, so holding the reference is safe. The best is held
@@ -348,7 +372,14 @@ function Simulation({ world, par, planeRef, trail, onWorldReady, onFlightRested 
     camera.lookAt(scratch.look)
 
     const rush = MathUtils.clamp((flight.airspeed - 22) / 45, 0, 1)
-    const fov = TUNING.fov + TUNING.fovSpeedGain * rush
+    // Debug turbo widens the lens past anything a real airspeed can reach — and
+    // eases in and out rather than switching, because the punch on entry and the
+    // settle on release are most of what sells the speed. Snapping straight to a
+    // wide lens reads as a glitch rather than as acceleration. Turbo already
+    // pins `rush` on its own, since it reports 165 m/s airspeed; this is the
+    // part on top that says "and this is not normal flight".
+    turboEase.current += ((flight.turbo ? 1 : 0) - turboEase.current) * (1 - Math.pow(0.004, dt))
+    const fov = TUNING.fov + TUNING.fovSpeedGain * rush + TURBO_FOV * turboEase.current
     const persp = camera as PerspectiveCamera
     if (Math.abs(persp.fov - fov) > 0.05) {
       persp.fov = fov
@@ -366,6 +397,8 @@ function Simulation({ world, par, planeRef, trail, onWorldReady, onFlightRested 
       vario: flight.vario,
       airLift: flight.airLift,
       stall: flight.stallFactor,
+      turbo: flight.turbo,
+      cheated: flight.cheated,
     })
     flushHud(dt, phaseChanged)
   })

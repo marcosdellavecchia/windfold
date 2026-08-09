@@ -26,6 +26,24 @@ const FIXED_DT = 1 / 120
 const MAX_STEPS = 8
 const RECORD_HZ = 10
 
+/**
+ * Debug turbo. See `Flight.turboStep`.
+ *
+ * 165 m/s crosses the 12 km map in about seventy seconds, which is fast enough
+ * to be worth doing and slow enough that the terrain streaming keeps up — the
+ * trees rescatter every 230 m of travel, so at much more than this the scatter
+ * runs several times a second and the frame budget goes with it.
+ */
+const TURBO_SPEED = 165
+/** Steeper than the real aircraft is allowed: this one cannot stall or spin. */
+const TURBO_BANK = 1.15
+const TURBO_PITCH = 0.85
+const TURBO_RATE = 2.6
+/** How hard bank pulls the heading round. Not a lift calculation — just a turn. */
+const TURBO_TURN = 1.15
+/** Metres held above the ground by the floor, so the plane clears its own trees. */
+const TURBO_CLEARANCE = 45
+
 export interface LaunchSite {
   pos: Vector3
   heading: number
@@ -67,6 +85,31 @@ export class Flight {
   aglHeight = 0
   /** Recorded path at RECORD_HZ, for ghost trails and the altitude profile. */
   path: FlightSample[] = []
+
+  /**
+   * Debug: hold the mouse button to cross the map at speed. Set from outside,
+   * once per frame, before `update`. Reachable only with `?cheats=on` — see
+   * `game/cheats.ts` for why it is switched on rather than discovered.
+   *
+   * A separate integration rather than a multiplier on the real one. Scaling the
+   * aerodynamics would have to answer what a 160 m/s paper plane does about
+   * stall, induced drag and a thermal, and every answer is a change to the flight
+   * model — which is the one thing a debug affordance must not touch. This skips
+   * the model entirely for as long as it is held and hands back a normally-flying
+   * aircraft the moment it is released.
+   */
+  turbo = false
+  /**
+   * Whether turbo was ever engaged on this flight. Latched, and never cleared
+   * except by `reset`.
+   *
+   * A flight that crossed six kilometres in forty seconds is not a score. Without
+   * this it would be written to the day's record and beaconed to the presence
+   * layer, where it would sit in a shared odometer that every other player reads
+   * — so the flight is marked at the moment of the first press and the scoring
+   * path checks it on landing.
+   */
+  cheated = false
 
   private readonly launchPos = new Vector3()
   private launchHeading = 0
@@ -147,6 +190,18 @@ export class Flight {
     }
     if (this.phase === 'down') return
 
+    if (this.turbo) {
+      this.cheated = true
+      this.accumulator = 0
+      this.turboStep(dt)
+      this.recordTimer += dt
+      if (this.recordTimer >= 1 / RECORD_HZ) {
+        this.recordTimer = 0
+        this.path.push({ x: this.pos.x, y: this.pos.y, z: this.pos.z })
+      }
+      return
+    }
+
     this.accumulator += dt
     let steps = 0
     while (this.accumulator >= FIXED_DT && steps < MAX_STEPS) {
@@ -162,6 +217,76 @@ export class Flight {
       this.recordTimer = 0
       this.path.push({ x: this.pos.x, y: this.pos.y, z: this.pos.z })
     }
+  }
+
+  /**
+   * Debug flight: kinematic, not aerodynamic. The nose points where the pointer
+   * says and the aircraft goes that way at TURBO_SPEED, and that is all of it.
+   *
+   * Nothing here can end a flight. The ground is a floor rather than a collision
+   * — at this speed the terrain arrives faster than anyone can pull up, and a
+   * tool for looking at the map is useless if looking at the map kills you — and
+   * the border is a wall rather than an ending, so the map is a room to fly
+   * around in.
+   *
+   * `distance` is deliberately not advanced. It is the score, and none of this is
+   * scoring; leaving it alone means a turbo hop to a far corner followed by a
+   * real glide still measures the glide.
+   */
+  private turboStep(dt: number) {
+    const T = TUNING
+    this.bodyAxes()
+
+    // Steering: the same pointer-to-attitude mapping the real model uses, run
+    // straight rather than through the control authority that airspeed earns.
+    const targetBank = this.smoothed.x * TURBO_BANK
+    const targetPitch = (T.invertPitch ? -this.smoothed.y : this.smoothed.y) * TURBO_PITCH
+    const bank = Math.atan2(-this.right.y, this.up.y)
+    const pitch = Math.asin(clamp(this.fwd.y, -1, 1))
+    const rollRate = clamp((targetBank - bank) * T.rollP, -TURBO_RATE, TURBO_RATE)
+    const pitchRate = clamp((targetPitch - pitch) * T.pitchP, -TURBO_RATE, TURBO_RATE)
+    // Bank turns the heading, so a roll actually goes somewhere — without this
+    // the aircraft slides sideways across the map facing forwards.
+    const yawRate = Math.sin(bank) * TURBO_TURN
+    this.applyRates(pitchRate, rollRate, yawRate, dt)
+    this.bank = bank
+
+    this.vel.copy(this.fwd).multiplyScalar(TURBO_SPEED)
+    this.pos.addScaledVector(this.vel, dt)
+    this.time += dt
+
+    // Floor, not collision.
+    const ground = surfaceHeight(this.hf, this.pos.x, this.pos.z) + TURBO_CLEARANCE
+    if (this.pos.y < ground) this.pos.y = ground
+    // Wall, not ending.
+    const edge = HALF_WORLD * 0.97
+    this.pos.x = clamp(this.pos.x, -edge, edge)
+    this.pos.z = clamp(this.pos.z, -edge, edge)
+
+    this.airspeed = TURBO_SPEED
+    this.vario = this.vel.y
+    this.alpha = 0
+    this.stallFactor = 0
+    this.airLift = 0
+    this.aglHeight = this.pos.y - sampleHeight(this.hf, this.pos.x, this.pos.z)
+  }
+
+  /**
+   * Hand back a normally-flying aircraft. Called when the button comes up.
+   *
+   * Dropping out of turbo at 160 m/s would leave the model holding an airspeed it
+   * has no answer for — the drag term alone would haul the nose through a
+   * manoeuvre nobody asked for. Re-entering at launch speed puts the plane
+   * wherever it was flown to, in the state it would have been in had it been
+   * launched from there, which is exactly what a look-around tool should leave
+   * behind.
+   */
+  endTurbo() {
+    if (this.phase !== 'flying') return
+    this.bodyAxes()
+    this.vel.copy(this.fwd).multiplyScalar(TUNING.launchSpeed)
+    this.airspeed = TUNING.launchSpeed
+    this.accumulator = 0
   }
 
   private previewAttitude(dt: number) {

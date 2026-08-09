@@ -16,12 +16,30 @@ export function Hud({ world, par, metresFlown }: { world: World; par: number; me
 
   return (
     <div className="hud">
+      {/*
+        Debug turbo's speed effect. A real motion blur wants a post-processing
+        pass and a render target, neither of which this game has — but the blur
+        that actually reads at speed is the one at the edge of vision, and a
+        backdrop filter behind a radial mask is exactly that for a few lines of
+        CSS. The centre of the frame stays sharp, which is both what the eye does
+        and what keeps the thing you are flying at legible.
+      */}
+      <div className={`speedRush${s.turbo ? ' on' : ''}`} />
+
       {/* Flight instruments — thin and minimal, per the art direction. */}
       <div className={`instruments ${s.phase === 'down' ? 'dim' : ''}`}>
         <div className="readout">
-          <span className="value">{metres(s.distance)}</span>
+          <span className={`value${s.cheated ? ' void' : ''}`}>{metres(s.distance)}</span>
           <span className="unit">m</span>
         </div>
+        {/*
+          The panel states the rule before turbo is switched on; this states it
+          again at the only other moment it matters. The distance keeps counting,
+          because going somewhere to look at it is the point — but a number that
+          is quietly not going to be kept is worse than no number, so it says so
+          while it is still running rather than at the results screen.
+        */}
+        {s.cheated && <div className="voidTag">turbo · not scored</div>}
         <div className="sub">
           {/* Height above ground is the resource the whole game is about, so it
               turns amber once there is not much of it left. */}

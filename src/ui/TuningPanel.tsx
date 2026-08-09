@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { TUNING, resetTuning, type Tuning } from '../sim/tuning'
 import { BIOME_ORDER } from '../sim/palette'
-import { isTyping, setPointerCaptured } from '../input'
+import { isTurboEnabled, isTyping, setPointerCaptured, setTurboEnabled } from '../input'
 import type { World } from '../sim/world'
 
 interface Row {
@@ -171,6 +171,40 @@ export function TuningPanel({ day, onDay, world }: { day: number; onDay: (d: num
             bump((v) => v + 1)
           }}
         />
+      </div>
+
+      {/*
+        Turbo lives behind a switch rather than being always on, and behind a
+        stated consequence rather than a bare switch. Holding the mouse button is
+        not an obscure gesture: found by accident, a paper plane crossing the map
+        at 165 m/s reads as a bug. And the cost of using it is not obvious from
+        the outside — the flight simply stops counting — so the panel says so
+        before it is switched on rather than the HUD explaining afterwards.
+
+        Deliberately not cleared by `reset`, which restores the flight model's
+        numbers. This is a mode, not a tunable.
+      */}
+      <div className="tuneGroup">
+        <div className="tuneGroupName">debug</div>
+        <div className="tuneRow">
+          <label>turbo</label>
+          <input
+            type="checkbox"
+            checked={isTurboEnabled()}
+            onChange={(e) => {
+              setTurboEnabled(e.target.checked)
+              bump((v) => v + 1)
+            }}
+          />
+          <span className="num">hold mouse</span>
+        </div>
+        {isTurboEnabled() && (
+          <p className="tuneWarn">
+            Hold the mouse button in flight to cross the map at 165 m/s, for looking
+            around. <strong>A flight that uses it is not scored</strong> — no record,
+            no best, and nothing added to this world&rsquo;s shared metres.
+          </p>
+        )}
       </div>
     </div>
   )

@@ -21,6 +21,17 @@ export interface HudState {
   lastDistance: number
   /** Whether the last flight ended in a gentle touchdown rather than a crash. */
   landed: boolean
+  /**
+   * Debug turbo, for the speed overlay. A boolean and not a ramp on purpose: the
+   * HUD publishes at 12 Hz, which is far too coarse to animate an opacity, so the
+   * fade is left to a CSS transition where it costs nothing and runs smooth.
+   */
+  turbo: boolean
+  /**
+   * Whether this flight has used turbo and is therefore not being scored.
+   * Latched for the whole flight, unlike `turbo`, which is only the moment.
+   */
+  cheated: boolean
 }
 
 const HUD_HZ = 12
@@ -38,6 +49,8 @@ const draft: HudState = {
   newBest: false,
   lastDistance: 0,
   landed: false,
+  turbo: false,
+  cheated: false,
 }
 
 let snapshot: HudState = { ...draft }

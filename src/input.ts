@@ -47,7 +47,40 @@ export function isTyping(e: KeyboardEvent): boolean {
  */
 export function setPointerCaptured(v: boolean) {
   captured = v
+  if (v) turboHeld = false
 }
+
+/**
+ * Debug: hold the mouse button to fly fast. See `Flight.turbo`.
+ *
+ * Mouse only, and deliberately. On touch the drag *is* the steering, so a
+ * held pointer means "I am flying", not "I want to go fast" — binding this to
+ * any pointer would put every touch player permanently in turbo.
+ *
+ * Holding does not fight the click that launches and restarts: that fires on
+ * pointer *up*, and mid-flight it does nothing at all, so a hold reads as turbo
+ * and a tap still reads as commit.
+ *
+ * Off until switched on in the tuning panel, and gated here rather than at any
+ * of the places that act on it: every consumer reaches turbo through this one
+ * function, so this is the only line that has to be right for the mode to stay
+ * shut. Holding the mouse button is not an obscure gesture — a player who leant
+ * on it and found the aircraft crossing the map at 165 m/s would reasonably
+ * conclude the game was broken.
+ */
+let turboHeld = false
+let turboEnabled = false
+
+export const isTurboEnabled = () => turboEnabled
+
+export function setTurboEnabled(v: boolean) {
+  turboEnabled = v
+  // Switching off mid-hold must not leave the button latched down, or turbo
+  // would resume the instant it is switched back on without touching the mouse.
+  if (!v) turboHeld = false
+}
+
+export const isTurboHeld = () => turboEnabled && turboHeld
 
 let touchActive = false
 let touchOriginX = 0
@@ -141,10 +174,28 @@ export function attachInput(target: HTMLElement | Window = window): () => void {
     }
   }
 
+  const onPointerDown = (e: PointerEvent) => {
+    if (e.pointerType !== 'mouse') return
+    if (captured) return
+    if ((e.target as HTMLElement)?.closest?.('[data-ui]')) return
+    turboHeld = true
+  }
+
   const onPointerUp = (e: PointerEvent) => {
+    // Released outside the canvas, released over the panel, released after the
+    // panel took the pointer: whatever happened, stop going fast. A turbo that
+    // can be left stuck on because the button came up somewhere unexpected is
+    // worse than no turbo.
+    turboHeld = false
     if (captured) return
     if ((e.target as HTMLElement)?.closest?.('[data-ui]')) return
     onCommit()
+  }
+
+  // The window loses the button entirely when focus goes elsewhere mid-hold —
+  // alt-tab, a devtools panel — and no pointerup ever arrives.
+  const onBlur = () => {
+    turboHeld = false
   }
 
   el.addEventListener('mousemove', onMouseMove as EventListener)
@@ -154,7 +205,10 @@ export function attachInput(target: HTMLElement | Window = window): () => void {
   el.addEventListener('touchcancel', onTouchEnd as EventListener)
   el.addEventListener('keydown', onKeyDown as EventListener)
   el.addEventListener('keyup', onKeyUp as EventListener)
+  el.addEventListener('pointerdown', onPointerDown as EventListener)
   el.addEventListener('pointerup', onPointerUp as EventListener)
+  el.addEventListener('pointercancel', onPointerUp as EventListener)
+  el.addEventListener('blur', onBlur as EventListener)
 
   return () => {
     el.removeEventListener('mousemove', onMouseMove as EventListener)
@@ -164,7 +218,10 @@ export function attachInput(target: HTMLElement | Window = window): () => void {
     el.removeEventListener('touchcancel', onTouchEnd as EventListener)
     el.removeEventListener('keydown', onKeyDown as EventListener)
     el.removeEventListener('keyup', onKeyUp as EventListener)
+    el.removeEventListener('pointerdown', onPointerDown as EventListener)
     el.removeEventListener('pointerup', onPointerUp as EventListener)
+    el.removeEventListener('pointercancel', onPointerUp as EventListener)
+    el.removeEventListener('blur', onBlur as EventListener)
   }
 }
 

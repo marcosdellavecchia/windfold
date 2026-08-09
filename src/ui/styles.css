@@ -556,3 +556,96 @@ canvas {
     display: none;
   }
 }
+
+/* ------------------------------------------------------------ debug turbo ---- */
+
+/*
+ * The speed effect for the debug turbo. Three things stacked, none of which
+ * needs a render target: a blur that only exists at the edge of the frame, a
+ * darkening of the same corners, and a faint forward-coloured wash.
+ *
+ * The mask is what makes it read as speed rather than as a smeared screen. Real
+ * motion blur at speed is radial — the centre of the frame is where you are
+ * going and stays sharp, and everything at the periphery is sweeping past fast
+ * enough to smear. Masking the blur to the corners reproduces that, and it also
+ * keeps the aircraft and the instruments perfectly readable, which a full-frame
+ * blur would not.
+ *
+ * pointer-events: none matters more than it looks: turbo is held with the mouse
+ * button, so an overlay that swallowed pointer events would eat the very input
+ * that summoned it.
+ */
+.speedRush {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  /* The blur is animated rather than parked at full strength behind a zero
+     opacity: a backdrop filter is a real compositing pass, and an invisible
+     element is not a good reason to be running one sixty times a second. At 0px
+     there is nothing to do and engines skip it. */
+  transition: opacity 260ms ease-out, -webkit-backdrop-filter 260ms ease-out,
+    backdrop-filter 260ms ease-out;
+  -webkit-backdrop-filter: blur(0px);
+  backdrop-filter: blur(0px);
+  /* Sharp well past the middle, blurred only out at the corners. */
+  -webkit-mask-image: radial-gradient(ellipse 62% 58% at 50% 52%, transparent 55%, #000 100%);
+  mask-image: radial-gradient(ellipse 62% 58% at 50% 52%, transparent 55%, #000 100%);
+  background: radial-gradient(
+    ellipse 70% 65% at 50% 52%,
+    rgba(0, 0, 0, 0) 50%,
+    rgba(10, 14, 24, 0.28) 100%
+  );
+}
+
+.speedRush.on {
+  opacity: 1;
+  -webkit-backdrop-filter: blur(7px);
+  backdrop-filter: blur(7px);
+  /* Slower in than out. Arriving at speed should feel like it takes a moment;
+     letting go of the button should feel immediate. */
+  transition: opacity 420ms ease-in, -webkit-backdrop-filter 420ms ease-in,
+    backdrop-filter 420ms ease-in;
+}
+
+/* A backdrop filter is the one expensive thing here, and it is the first thing
+   to drop if the frame budget matters more than the flourish. */
+@media (prefers-reduced-motion: reduce) {
+  .speedRush,
+  .speedRush.on {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+/*
+ * Turbo, stated twice: once in the panel before it is switched on, once on the
+ * instruments while a flight is spending it. Amber rather than red — this is a
+ * tool working as intended, not a fault — and it borrows the same colour the
+ * altitude readout already uses to mean "pay attention to this".
+ */
+.tuneWarn {
+  margin: 6px 0 2px;
+  padding: 7px 9px;
+  border-left: 2px solid rgba(255, 190, 110, 0.75);
+  background: rgba(255, 190, 110, 0.08);
+  color: rgba(255, 255, 255, 0.72);
+  line-height: 1.45;
+}
+
+.tuneWarn strong {
+  color: rgba(255, 205, 140, 0.95);
+  font-weight: 600;
+}
+
+.readout .value.void {
+  color: rgba(255, 205, 140, 0.92);
+}
+
+.voidTag {
+  margin-top: 2px;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(255, 205, 140, 0.85);
+}
