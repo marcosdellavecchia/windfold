@@ -106,19 +106,53 @@ function makeMaterial(world: World): MeshLambertMaterial {
         ${CLOUD_SHADOW_GLSL}
 
         /**
-         * Ground relief in metres, from the same two noise scales that already
-         * tint the ground below. Metres rather than a unitless strength because
-         * the normal is bent by amplitude over wavelength — writing both scales
+         * Value noise with a quintic fade, for anything that gets differentiated.
+         *
+         * csNoise fades cubically, which is C1: the value is continuous across a
+         * lattice line but the *slope* of the fade is not. That is invisible while
+         * the noise only decides how bright a pixel is, and it is glaring the
+         * moment the field is differenced to bend a normal — the discontinuity
+         * lands directly in the shading normal and lights up as a grid of squares
+         * at the lattice spacing. Up close that read as the ground being
+         * pixelated, because it was: those were the 4 m noise cells.
+         *
+         * The quintic is C2, so the gradient crosses a lattice line smoothly and
+         * the grid disappears. It is the same fade sim/noise.ts has always used,
+         * and for exactly this reason. csNoise keeps the cheaper one: cloud
+         * shadows and water only ever shade with it.
+         */
+        float trNoise(vec2 p) {
+          vec2 i = floor(p);
+          vec2 f = fract(p);
+          f = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+          return mix(
+            mix(csHash(i), csHash(i + vec2(1.0, 0.0)), f.x),
+            mix(csHash(i + vec2(0.0, 1.0)), csHash(i + vec2(1.0, 1.0)), f.x),
+            f.y
+          );
+        }
+
+        /**
+         * Ground relief in metres. Metres rather than a unitless strength because
+         * the normal is bent by amplitude over wavelength — writing every scale
          * down in the same unit is the only way they stay comparable.
          *
-         * Each scale carries its own distance weight, so the 4 m grain is gone
-         * long before a fragment is wider than one of its bumps. Bending the
-         * normal by a feature smaller than a pixel is how a surface starts to
-         * crawl, and the sea already taught that lesson twice.
+         * Three octaves, each on its own rotated lattice. The rotation matters as
+         * much as the fade did: a value-noise lattice is axis-aligned, so stacking
+         * octaves straight puts every octave's cell corners on the same world
+         * lines and the squares reinforce instead of hiding each other. Turned by
+         * 31 and 73 degrees they never agree, and none of them agrees with the
+         * world axes either.
+         *
+         * Each scale carries its own distance weight, so a grain is gone long
+         * before a fragment grows wider than one of its bumps. Bending the normal
+         * by a feature smaller than a pixel is how a surface starts to crawl, and
+         * the sea already taught that lesson twice.
          */
-        float terrainRelief(vec2 xz, float w1, float w2) {
-          return csNoise(xz * (1.0 / 42.0) + 7.3) * (3.0 * w1)
-               + csNoise(xz * (1.0 / 4.3) + 2.1) * (0.55 * w2);
+        float terrainRelief(vec2 xz, float w1, float w2, float w3) {
+          return trNoise(xz * (1.0 / 42.0) + 7.3) * (3.0 * w1)
+               + trNoise(mat2(0.857, 0.515, -0.515, 0.857) * xz * (1.0 / 4.3) + 2.1) * (0.5 * w2)
+               + trNoise(mat2(0.292, 0.956, -0.956, 0.292) * xz * (1.0 / 1.5) + 11.7) * (0.11 * w3);
         }`,
       )
       .replace(
@@ -135,13 +169,21 @@ function makeMaterial(world: World): MeshLambertMaterial {
           // untouched and the physics still samples exactly what it always did.
           float w1 = 1.0 - smoothstep(500.0, 1700.0, vEyeDist);
           float w2 = 1.0 - smoothstep(150.0, 700.0, vEyeDist);
+          // The finest octave exists for the near field only — it is what stops a
+          // close pass reading as a few big soft cells, which no amount of fixing
+          // the lattice would have solved on its own. Gone by 260 m, long before
+          // a 1.5 m bump could approach a pixel.
+          float w3 = 1.0 - smoothstep(60.0, 260.0, vEyeDist);
           // Coherent across a triangle, so the branch is nearly free — and past
-          // 1700 m it skips six noise samples on ground that is mostly haze anyway.
+          // 1700 m it skips the noise entirely on ground that is mostly haze.
           if (w1 > 0.0) {
-            float e = 0.9;
-            float h0 = terrainRelief(vCloudXZ, w1, w2);
-            float hx = terrainRelief(vCloudXZ + vec2(e, 0.0), w1, w2);
-            float hz = terrainRelief(vCloudXZ + vec2(0.0, e), w1, w2);
+            // Short enough to resolve the finest octave: differencing over 0.9 m
+            // on a 1.5 m feature would return the average of a bump and its far
+            // side, which is close to nothing.
+            float e = 0.35;
+            float h0 = terrainRelief(vCloudXZ, w1, w2, w3);
+            float hx = terrainRelief(vCloudXZ + vec2(e, 0.0), w1, w2, w3);
+            float hz = terrainRelief(vCloudXZ + vec2(0.0, e), w1, w2, w3);
             // A surface rising toward +x leans its normal toward -x, hence the
             // subtraction. Valid while the face is not far from horizontal, which
             // on a heightfield it never is for long.
@@ -160,8 +202,13 @@ function makeMaterial(world: World): MeshLambertMaterial {
           // features go sub-pixel; the sea shook twice to teach that lesson,
           // and this field never animates at all, so what remains is texture,
           // not shimmer.
-          float gd1 = csNoise(vCloudXZ * (1.0 / 42.0) + 7.3);
-          float gd2 = csNoise(vCloudXZ * (1.0 / 4.3) + 2.1);
+          //
+          // The same two lattices the relief above bends the normal on, sampled
+          // the same way. They used to be plain csNoise, which put a cubic-faded
+          // axis-aligned grid of brightness on top of a quintic-faded rotated one
+          // of shading — two grids disagreeing about where the cells were.
+          float gd1 = trNoise(vCloudXZ * (1.0 / 42.0) + 7.3);
+          float gd2 = trNoise(mat2(0.857, 0.515, -0.515, 0.857) * vCloudXZ * (1.0 / 4.3) + 2.1);
           float f1 = 1.0 - smoothstep(500.0, 1700.0, vEyeDist);
           float f2 = 1.0 - smoothstep(150.0, 700.0, vEyeDist);
           gl_FragColor.rgb *= 1.0 + (gd1 - 0.5) * 0.11 * f1 + (gd2 - 0.5) * 0.07 * f2;
