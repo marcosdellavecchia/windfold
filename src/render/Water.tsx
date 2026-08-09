@@ -76,11 +76,13 @@ export function Water({ world }: { world: World }) {
       uniforms: {
         uDeep: { value: new Color(rgbToHex(pal.water)).multiplyScalar(0.5) },
         uShallow: { value: new Color(rgbToHex(pal.water)).multiplyScalar(1.45) },
-        // Weighted toward the zenith, not the horizon. Reflecting the horizon colour
-        // is closer to correct for a grazing view, but near a low sun that colour is
-        // cream, and the sea came out looking like a desert. Biasing upward keeps
-        // water reading as water at every angle the player actually flies at.
-        uSky: { value: new Color(rgbToHex(pal.skyHorizon)).lerp(new Color(rgbToHex(pal.skyTop)), 0.55) },
+        // The sky's own two colours rather than one blend of them, so the surface
+        // can reflect the gradient instead of a single flat tone. What made the
+        // water read as cardboard was not the absence of ripples — those were
+        // already here — but that every pixel of it reflected the same colour,
+        // and a mirror whose image never changes is not read as a mirror.
+        uSkyTop: { value: new Color(rgbToHex(pal.skyTop)) },
+        uSkyHorizon: { value: new Color(rgbToHex(pal.skyHorizon)) },
         uSun: { value: new Color(rgbToHex(pal.sun)) },
         uFog: { value: new Color(rgbToHex(pal.fog)) },
         uSunDir: { value: world.sunDir.clone() as Vector3 },
@@ -119,7 +121,8 @@ export function Water({ world }: { world: World }) {
       fragmentShader: /* glsl */ `
         uniform vec3 uDeep;
         uniform vec3 uShallow;
-        uniform vec3 uSky;
+        uniform vec3 uSkyTop;
+        uniform vec3 uSkyHorizon;
         uniform vec3 uSun;
         uniform vec3 uFog;
         uniform vec3 uSunDir;
@@ -139,6 +142,61 @@ export function Water({ world }: { world: World }) {
         varying float vDist;
 
         ${CLOUD_SHADOW_GLSL}
+
+        /** One texel, decoded. The 16 bits arrive split across two bytes. */
+        float texelH(vec2 texel) {
+          vec2 hg = texture2D(uHeight, texel * ${(1 / n).toFixed(8)}).rg;
+          return (hg.r * 65280.0 + hg.g * 255.0) / 65535.0 * uHeightRange + uHeightMin;
+        }
+
+        /**
+         * The terrain height under a world position, reconstructed the way the
+         * terrain mesh actually interpolates it.
+         *
+         * Reading this texture with hardware filtering gives the bilinear surface,
+         * and the mesh is not bilinear — it is two triangles per quad, split on the
+         * diagonal from (ix, iz+1) to (ix+1, iz). Those two surfaces meet at the
+         * corners and disagree everywhere between, by the quad's twist,
+         * |h00 + h11 - h10 - h01| / 4. Measured along the waterline that is a
+         * couple of metres on most maps and up to twelve on an archipelago, where
+         * 42% of shoreline quads disagreed by more than the entire shore fade.
+         *
+         * That is the shaking coast. Wherever the disagreement outruns the fade,
+         * the shader believes there is water over ground the mesh has placed above
+         * the waterline, draws it at full opacity, and the depth test then decides
+         * per pixel and per frame which of the two is in front. The height texture
+         * was added to stop the waterline being a raw intersection of two surfaces;
+         * it did, but it left the shader reading a third surface that was neither.
+         *
+         * So: fetch the four corners at their texel centres and run the same
+         * split-triangle interpolation the mesh does. Four fetches rather than one,
+         * all inside a cache line, and the two surfaces are now the same surface.
+         */
+        float terrainAt(vec2 xz) {
+          vec2 g = (xz * uHeightUv.x + uHeightUv.y) * ${n}.0 - 0.5;
+          vec2 gi = floor(g);
+          vec2 t = g - gi;
+          float h00 = texelH(gi + vec2(0.5, 0.5));
+          float h10 = texelH(gi + vec2(1.5, 0.5));
+          float h01 = texelH(gi + vec2(0.5, 1.5));
+          float h11 = texelH(gi + vec2(1.5, 1.5));
+          // Lower-left triangle holds t.x + t.y < 1; the upper-right holds the rest.
+          return t.x + t.y < 1.0
+            ? h00 + (h10 - h00) * t.x + (h01 - h00) * t.y
+            : h11 + (h10 - h11) * (1.0 - t.y) + (h01 - h11) * (1.0 - t.x);
+        }
+
+        /**
+         * The sky's colour at a given height up the dome — the same two steps
+         * Sky.tsx paints with, so the reflection and the thing being reflected
+         * cannot drift apart. Only the vertical component is needed: the sun is
+         * handled by the speculars below, and everything else up there is a
+         * gradient in one axis.
+         */
+        vec3 skyTone(float up) {
+          vec3 s = mix(uSkyHorizon, uSkyTop, smoothstep(0.0, 0.55, up));
+          return mix(uFog, s, smoothstep(-0.03, 0.28, up));
+        }
 
         // The sea's long waves: one swell train along the wind plus a weaker
         // harmonic, ~310 m crest to crest, marching at swell speed. Long enough
@@ -171,9 +229,7 @@ export function Water({ world }: { world: World }) {
           // How much water is under this pixel. Beyond the map the texture
           // clamps to the border heights, which the border mask keeps low, so
           // the open sea stays deep all the way to the fog.
-          vec2 hg = texture2D(uHeight, vWorld.xz * uHeightUv.x + uHeightUv.y).rg;
-          float terrain = (hg.r * 65280.0 + hg.g * 255.0) / 65535.0 * uHeightRange + uHeightMin;
-          float depth = uWaterLevel - terrain;
+          float depth = uWaterLevel - terrainAt(vWorld.xz);
 
           // Beyond the map the height texture clamps to its border row, which
           // extrudes the last coastline outward as streaks of phantom shallows
@@ -228,20 +284,40 @@ export function Water({ world }: { world: World }) {
           // last dozen metres of depth lighten toward the shore, which is what
           // makes a coast read as shelving instead of cut with a knife.
           body = mix(uShallow, body, smoothstep(0.0, 12.0, depth));
+          // What the surface actually reflects, per pixel: the sky in the
+          // direction the wave sends the eye. Every crest and trough now returns
+          // a different part of the dome, which is the whole reason a real water
+          // surface reads as reflective — the image moves when the surface does.
+          //
+          // Biased upward rather than taken straight. A true grazing reflection
+          // returns the horizon, and near a low sun the horizon is cream, which
+          // turned the sea into a desert — the reason this used to be one flat
+          // zenith-weighted colour. Keeping some of the zenith in the sample
+          // preserves the variation without bringing the desert back.
+          vec3 refl = reflect(-viewDir, n);
+          vec3 skyCol = skyTone(mix(max(refl.y, 0.0), 0.8, 0.45));
+
           // Capped well below 1: a physically full mirror at grazing angles turns every
           // lake and sea into the same colour as the sky, and the landscape goes
           // monochrome. Water keeps some of its own body colour at every angle.
-          vec3 col = mix(body, uSky, clamp(fres, 0.0, 0.42));
+          vec3 col = mix(body, skyCol, clamp(fres, 0.0, 0.42));
 
           // Sun glitter: a tight specular on the wave slopes.
           vec3 h = normalize(normalize(uSunDir) + viewDir);
           float spec = pow(max(dot(n, h), 0.0), 220.0);
           col += uSun * spec * 1.6;
+          // And the road it lies on. The tight lobe above is one sparkle; this is
+          // the broad ragged path from the sun to the eye that all the sparkles
+          // sit in, and it is probably the single most recognisable thing about a
+          // sunlit stretch of water. It needs no extra waves — the same normal,
+          // read with a much softer exponent, is what spreads it out.
+          float road = pow(max(dot(n, h), 0.0), 16.0);
+          col += uSun * road * 0.26;
 
           // Whitecaps where chop and swell crest together — kept close, where
           // individual caps are readable, and only as much wind as the day has.
           float crest = smoothstep(0.62, 1.15, w0 + s0 * 0.45) * (1.0 - smoothstep(200.0, 800.0, vDist));
-          col += mix(uSky, vec3(1.0), 0.4) * crest * uWindAmt * 0.12;
+          col += mix(skyCol, vec3(1.0), 0.4) * crest * uWindAmt * 0.12;
 
           // Surf. Two regimes, split by distance, because the failure modes
           // differ. Near: a breathing band over the last metres of depth, its
@@ -261,7 +337,20 @@ export function Water({ world }: { world: World }) {
           col = mix(col, mix(uShallow, vec3(1.0), 0.55), foam * 0.45);
 
           col *= cloudShadow(vWorld.xz, uCloudWind, uTime, uCloudSeed);
-          col = mix(col, uFog, vFog);
+
+          // Haze over water is not the haze over land. It carries some of the
+          // water's own colour and it is darker, because there is no lit ground
+          // beneath it throwing light back up into it.
+          //
+          // This is the difference between having a horizon and not having one.
+          // Fogging the sea to exactly the colour the sky fogs to is what the
+          // shared uFog was for, and at the shoreline it is right — that is the
+          // seam the single fog constant exists to hide. But carried all the way
+          // out it means the far sea and the low sky arrive at identical values
+          // and the line between them stops existing, so open water reads as more
+          // sky. A few percent is enough: the eye needs a step, not a stripe.
+          vec3 seaHaze = mix(uFog, uDeep, 0.17) * 0.94;
+          col = mix(col, seaHaze, vFog);
           // The soft shore itself: water thins to nothing over its last two
           // metres of depth, so the waterline is a gradient the width of a
           // beach's wet edge rather than an aliased intersection line.
