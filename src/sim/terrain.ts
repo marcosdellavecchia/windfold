@@ -413,9 +413,6 @@ export function generateHeightfield(biome: BiomeId, rng: Rng): Heightfield {
   const ox = rng() * 20000 - 10000
   const oz = rng() * 20000 - 10000
 
-  let min = Infinity
-  let max = -Infinity
-
   for (let iz = 0; iz < n; iz++) {
     const z = -HALF_WORLD + iz * cell
     for (let ix = 0; ix < n; ix++) {
@@ -462,17 +459,103 @@ export function generateHeightfield(biome: BiomeId, rng: Rng): Heightfield {
       const edge = borderMask(x, z)
       t *= edge
 
-      const y = t * shape.amplitude
-      data[iz * n + ix] = y
-      if (y < min) min = y
-      if (y > max) max = y
+      data[iz * n + ix] = t * shape.amplitude
     }
+  }
+
+  // The one pass over the finished field. Min and max are taken after it, since
+  // it shaves the peaks and fills the hollows — and everything downstream, from
+  // the waterline to the treeline to the snowline, is a fraction of that range.
+  settle(data, n, cell)
+
+  let min = Infinity
+  let max = -Infinity
+  for (let i = 0; i < data.length; i++) {
+    const y = data[i]
+    if (y < min) min = y
+    if (y > max) max = y
   }
 
   const hasWater = shape.waterFrac > 0
   const waterLevel = hasWater ? min + (max - min) * shape.waterFrac : min - 1
 
   return { size: WORLD_SIZE, seg, cell, data, min, max, waterLevel, hasWater, landform, landform2, hybrid }
+}
+
+/**
+ * Gradient a slope may hold before loose material starts leaving it — 0.9, or
+ * about 42 degrees. Rock talus really sits nearer 35, but at 32 m cells a single
+ * gradient is an average over a whole cell rather than the face of one boulder,
+ * and clamping this hard flattened the alpine biome's character in testing.
+ */
+const REPOSE = 0.9
+/** Fraction of the excess that moves per pass. Under-relaxed on purpose: see `settle`. */
+const SETTLE_RATE = 0.35
+const SETTLE_PASSES = 3
+
+/**
+ * The angle of repose — the cheap eighty percent of erosion.
+ *
+ * Everything above this is additive noise and analytic landforms, and neither has
+ * any history in it. Real slopes are convex at the top and concave at the bottom
+ * because loose material leaves steep ground and collects at the foot of it; fbm
+ * has no idea. That absence is most of what reads as "computer-generated" from a
+ * kilometre up, and no amount of extra octaves fixes it, because it is not a
+ * missing frequency — it is a missing process.
+ *
+ * So: wherever a cell stands more than REPOSE above a neighbour, some of the
+ * excess moves downhill. Below that threshold nothing happens at all. Faces stay
+ * faces and grow scree aprons at their feet, gullies fill from the bottom, and the
+ * single-cell spikes the finest octave leaves behind get shaved off.
+ *
+ * The threshold does the biome selection by itself, which is why there is one
+ * constant here rather than seven. The mountain biomes carry slopes past it on a
+ * few percent of their cells and get talus; `field` never reaches it — its 99th
+ * percentile slope is 24 degrees — and comes out untouched. That is exactly where
+ * scree does and does not occur, and it fell out of the distribution rather than
+ * being tuned in.
+ *
+ * Deliberately NOT hydraulic erosion, however much better that would look.
+ * Droplets carve drainage, drainage is a continuous downhill route across the
+ * map, and a continuous downhill route is the precise thing the carve depths, the
+ * caldera radius and the glacial trough are all tuned to prevent.
+ */
+function settle(data: Float32Array, n: number, cell: number) {
+  const maxDrop = REPOSE * cell
+  // Transfers accumulate here and are applied between passes, so the result does
+  // not depend on which corner the sweep started from. Every transfer subtracts
+  // from one cell exactly what it adds to another, so the map's mean height is
+  // unchanged and no amount of settling can tilt the world into a ramp.
+  const delta = new Float32Array(data.length)
+  for (let pass = 0; pass < SETTLE_PASSES; pass++) {
+    delta.fill(0)
+    for (let iz = 0; iz < n; iz++) {
+      for (let ix = 0; ix < n; ix++) {
+        const i = iz * n + ix
+        const h = data[i]
+        let moved = 0
+        if (ix > 0) moved += shed(data, delta, i - 1, h, maxDrop)
+        if (ix < n - 1) moved += shed(data, delta, i + 1, h, maxDrop)
+        if (iz > 0) moved += shed(data, delta, i - n, h, maxDrop)
+        if (iz < n - 1) moved += shed(data, delta, i + n, h, maxDrop)
+        delta[i] -= moved
+      }
+    }
+    for (let i = 0; i < data.length; i++) data[i] += delta[i]
+  }
+}
+
+/**
+ * Move a share of the excess from a cell to one lower neighbour, and report how
+ * much left. The quarter is what stops a cell shedding to all four neighbours at
+ * once from overshooting below them and oscillating on the next pass.
+ */
+function shed(data: Float32Array, delta: Float32Array, j: number, h: number, maxDrop: number): number {
+  const excess = h - data[j] - maxDrop
+  if (excess <= 0) return 0
+  const t = excess * SETTLE_RATE * 0.25
+  delta[j] += t
+  return t
 }
 
 function sampleKind(kind: NoiseKind, n: Noise2D, x: number, z: number, o: FbmOptions): number {

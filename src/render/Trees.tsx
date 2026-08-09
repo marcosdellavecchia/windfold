@@ -20,8 +20,12 @@ import {
   DETAIL2,
   FLORA,
   createForestMask,
+  createGroveMask,
+  createRockMask,
   forestAmount,
   forestDay,
+  groveAmount,
+  rockAmount,
   type DetailKind,
   type ForestDay,
 } from '../sim/flora'
@@ -117,6 +121,14 @@ export function Trees({ world }: { world: World }) {
       // Shared with the terrain's own forest tint, so trees only ever stand on
       // ground that already looks wooded.
       mask: createForestMask(world.seed),
+      // The finer field inside that one: thickets and glades. Deliberately not
+      // shared with the terrain — the ground tint wants to stay smooth under a
+      // wood, and painting glades into it would show the seams where the
+      // instanced trees stop.
+      grove: createGroveMask(world.seed),
+      // Shared with the terrain again, like the forest mask and for the same
+      // reason: boulders have to land on ground that is already stone-coloured.
+      rock: createRockMask(world.seed),
     }
   }, [world])
 
@@ -150,7 +162,15 @@ interface Built {
   accent: Rgb
   day: ForestDay
   mask: Noise2D
+  grove: Noise2D
+  rock: Noise2D
 }
+
+/**
+ * The understory species that belong on stone. Everything else — cactus, palm,
+ * shrub, bale, reed, tuft — wants soil, and the rock field is none of its business.
+ */
+const STONY = new Set<DetailKind>(['boulder', 'spire'])
 
 const MATRIX = new Matrix4()
 const POS = new Vector3()
@@ -199,6 +219,7 @@ function scatter(world: World, built: Built, cx: number, cz: number) {
         const colourRoll = rng()
         const accentRoll = rng()
         const maskRoll = rng()
+        const clumpRoll = rng()
 
         // Filters are ordered cheapest-first: this runs a few thousand times per
         // rescatter, and the gradient alone costs four height samples.
@@ -210,11 +231,21 @@ function scatter(world: World, built: Built, cx: number, cz: number) {
         const h = sampleHeight(hf, x, z)
         if (h > treelineY || h < floorY || h < waterY) continue
 
+        // Thickets and glades, and the reason `density` is several times what it
+        // used to be. It sits above the gradient rather than below it because it
+        // is one noise sample against the gradient's four height samples: the
+        // expensive filters below then run in proportion to the trees this
+        // actually produces (measured at 1.6-1.9x the old count) rather than to
+        // the attempts made to produce them (2.1-3.0x). The worst biome's
+        // rescatter went from 0.8 ms to 2.0 ms — still a fraction of a frame,
+        // and it only happens every 230 m of travel.
+        if (clumpRoll > groveAmount(built.grove, spec, x, z)) continue
+
         sampleGradient(hf, x, z, GRAD)
         const slope = Math.hypot(GRAD.x, GRAD.z)
         if (slope > spec.maxSlope) continue
 
-        if (maskRoll > forestAmount(built.mask, spec, hf, h, slope, x, z)) continue
+        if (maskRoll > forestAmount(built.mask, built.rock, spec, hf, h, slope, x, z)) continue
 
         const broad = speciesRoll < dayBroadleaf
         const mesh = broad ? built.broadleafMesh : built.coniferMesh
@@ -269,12 +300,19 @@ function scatter(world: World, built: Built, cx: number, cz: number) {
 
         sampleGradient(hf, x, z, GRAD)
         const slope = Math.hypot(GRAD.x, GRAD.z)
-        if (slope < detail.slope[0] || slope > detail.slope[1]) continue
+        // Boulders and basalt want steep ground, because talus is what a slope
+        // sheds. But a scree sector is flat ground buried in the stuff, and the
+        // lower bound is what used to make that impossible — so where the rock
+        // field is high it goes away, and the stone itself becomes the reason
+        // they are standing there. The upper bound stays: nothing perches on a
+        // cliff face, however stony the cliff is.
+        const stony = STONY.has(detail.kind) ? rockAmount(built.rock, spec, hf, h, x, z) : 0
+        if (slope < detail.slope[0] * (1 - stony) || slope > detail.slope[1]) continue
 
         // Thinned rather than excluded under canopy: a boulder in a wood is fine,
         // a boulder field in a wood is not.
         if (detail.inForest < 1) {
-          const cover = forestAmount(built.mask, spec, hf, h, slope, x, z)
+          const cover = forestAmount(built.mask, built.rock, spec, hf, h, slope, x, z)
           if (cover > 0 && forestRoll > detail.inForest) continue
         }
 
@@ -324,7 +362,7 @@ function scatter(world: World, built: Built, cx: number, cz: number) {
           if (slope < detail2.slope[0] || slope > detail2.slope[1]) continue
 
           if (detail2.inForest < 1) {
-            const cover = forestAmount(built.mask, spec, hf, h, slope, x, z)
+            const cover = forestAmount(built.mask, built.rock, spec, hf, h, slope, x, z)
             if (cover > 0 && forestRoll > detail2.inForest) continue
           }
 

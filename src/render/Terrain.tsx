@@ -6,7 +6,7 @@ import { HALF_WORLD, clamp01, smoothstep } from '../sim/terrain'
 import { Noise2D, fbm } from '../sim/noise'
 import { mulberry32 } from '../sim/rng'
 import type { BiomeId, Rgb } from '../sim/palette'
-import { FLORA, createForestMask, forestAmount, forestColour } from '../sim/flora'
+import { FLORA, createForestMask, createRockMask, forestAmount, forestColour, rockAmount } from '../sim/flora'
 import { CLOUD_SHADOW_GLSL, cloudShadowSeed } from './atmosphere'
 
 /**
@@ -79,10 +79,18 @@ function makeMaterial(world: World): MeshLambertMaterial {
     shader.uniforms.uCloudWind = uCloudWind
     shader.uniforms.uCloudSeed = uCloudSeed
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec2 vCloudXZ;\nvarying float vEyeDist;')
+      .replace(
+        '#include <common>',
+        '#include <common>\nvarying vec2 vCloudXZ;\nvarying float vEyeDist;\nvarying vec3 vWorldNormal;',
+      )
       .replace(
         '#include <begin_vertex>',
-        '#include <begin_vertex>\nvCloudXZ = (modelMatrix * vec4(position, 1.0)).xz;',
+        '#include <begin_vertex>\nvCloudXZ = (modelMatrix * vec4(position, 1.0)).xz;\n' +
+          // The relief below bends the normal in world space, because the field it
+          // bends by is a function of world xz. Lighting wants view space, so the
+          // world normal has to travel down as its own varying — `vNormal` has
+          // already been through the normal matrix by the time the fragment sees it.
+          'vWorldNormal = mat3(modelMatrix) * objectNormal;',
       )
       .replace('#include <project_vertex>', '#include <project_vertex>\nvEyeDist = -mvPosition.z;')
     shader.fragmentShader = shader.fragmentShader
@@ -91,10 +99,56 @@ function makeMaterial(world: World): MeshLambertMaterial {
         `#include <common>
         varying vec2 vCloudXZ;
         varying float vEyeDist;
+        varying vec3 vWorldNormal;
         uniform float uCloudTime;
         uniform vec2 uCloudWind;
         uniform float uCloudSeed;
-        ${CLOUD_SHADOW_GLSL}`,
+        ${CLOUD_SHADOW_GLSL}
+
+        /**
+         * Ground relief in metres, from the same two noise scales that already
+         * tint the ground below. Metres rather than a unitless strength because
+         * the normal is bent by amplitude over wavelength — writing both scales
+         * down in the same unit is the only way they stay comparable.
+         *
+         * Each scale carries its own distance weight, so the 4 m grain is gone
+         * long before a fragment is wider than one of its bumps. Bending the
+         * normal by a feature smaller than a pixel is how a surface starts to
+         * crawl, and the sea already taught that lesson twice.
+         */
+        float terrainRelief(vec2 xz, float w1, float w2) {
+          return csNoise(xz * (1.0 / 42.0) + 7.3) * (3.0 * w1)
+               + csNoise(xz * (1.0 / 4.3) + 2.1) * (0.55 * w2);
+        }`,
+      )
+      .replace(
+        '#include <normal_fragment_maps>',
+        `#include <normal_fragment_maps>
+        {
+          // The ground is a smooth surface with a picture painted on it: vertices
+          // sit 32 m apart, so every slope is lit as though it were polished, and
+          // the noise below only ever changed how *bright* the paint was. Bending
+          // the shading normal is what turns painted detail into detail that
+          // catches the light — the same bump goes bright on the side facing the
+          // sun and dark on the side away from it, and the eye reads that as
+          // surface rather than as a texture. Free in geometry; the mesh is
+          // untouched and the physics still samples exactly what it always did.
+          float w1 = 1.0 - smoothstep(500.0, 1700.0, vEyeDist);
+          float w2 = 1.0 - smoothstep(150.0, 700.0, vEyeDist);
+          // Coherent across a triangle, so the branch is nearly free — and past
+          // 1700 m it skips six noise samples on ground that is mostly haze anyway.
+          if (w1 > 0.0) {
+            float e = 0.9;
+            float h0 = terrainRelief(vCloudXZ, w1, w2);
+            float hx = terrainRelief(vCloudXZ + vec2(e, 0.0), w1, w2);
+            float hz = terrainRelief(vCloudXZ + vec2(0.0, e), w1, w2);
+            // A surface rising toward +x leans its normal toward -x, hence the
+            // subtraction. Valid while the face is not far from horizontal, which
+            // on a heightfield it never is for long.
+            vec3 wn = normalize(vWorldNormal) - vec3(hx - h0, 0.0, hz - h0) / e;
+            normal = normalize((viewMatrix * vec4(normalize(wn), 0.0)).xyz);
+          }
+        }`,
       )
       .replace(
         '#include <fog_fragment>',
@@ -132,6 +186,7 @@ function buildGeometry(world: World): BufferGeometry {
   const c: Rgb = [0, 0, 0]
   const spec = FLORA[world.biome]
   const mask = createForestMask(world.seed)
+  const rockMask = createRockMask(world.seed)
   const canopy = forestColour(pal, world.seed)
   const patchNoise = new Noise2D(mulberry32(world.seed ^ 0x9a7c))
   const veinNoise = new Noise2D(mulberry32(world.seed ^ 0x51a7))
@@ -189,9 +244,14 @@ function buildGeometry(world: World): BufferGeometry {
       const strata = Math.sin(h * 0.045 + vein * 2.4) * 0.5 + 0.5
       lerp3(c, c, pal.mineral, smoothstep(0.42, 1.1, slope) * strata * 0.4)
 
+      // Rock first, because the forest reads it: bare stone holds no wood, and
+      // this pass is the one place that would otherwise evaluate the field twice
+      // for every vertex.
+      const rocky = rockAmount(rockMask, spec, hf, h, x, z)
+
       // Woodland, painted into the ground. See the note on forestAmount: the
       // instanced trees are near-field detail on top of this, not a substitute.
-      const forest = forestAmount(mask, spec, hf, h, slope, x, z)
+      const forest = forestAmount(mask, rockMask, spec, hf, h, slope, x, z, rocky)
       if (forest > 0) lerp3(c, c, canopy, forest * 0.82)
 
       // Meadow, only where there is neither forest nor slope to hold it — the open
@@ -202,6 +262,16 @@ function buildGeometry(world: World): BufferGeometry {
         (1 - smoothstep(0.18, 0.55, slope)) *
         (1 - smoothstep(0.5, 0.82, t))
       if (meadow > 0) lerp3(c, c, pal.bloom, meadow * 0.3)
+
+      // Rocky ground, and the only route to stone that does not go through slope.
+      // Painted after the forest and the meadow so it wins over both: this is
+      // ground with nothing on it, which is the entire point of it. The strata
+      // field comes along so a scree sector is not one flat grey — the same bands
+      // that cut the cliffs run through the flat stone, level, as they should.
+      if (rocky > 0) {
+        lerp3(c, c, pal.rock, rocky * 0.72)
+        lerp3(c, c, pal.mineral, rocky * strata * 0.26)
+      }
 
       // The farmland quilt, field biome only. A patchwork of worked fields is
       // *the* iconic view from a glider, and the flats here were the largest
