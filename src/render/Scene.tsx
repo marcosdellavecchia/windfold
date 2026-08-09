@@ -79,7 +79,7 @@ export function Scene({
       <Thermals world={world} />
       <Clouds world={world} />
       <Birds world={world} />
-      <Herds world={world} />
+      <Herds world={world} planeRef={planeRef} />
       <RestingPlanes world={world} rests={rests ?? null} />
       <Motes world={world} />
       <primitive object={trail.object} />

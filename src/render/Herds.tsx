@@ -10,6 +10,7 @@ import {
   MeshLambertMaterial,
   Quaternion,
   Color,
+  Group,
   Vector3,
 } from 'three'
 import type { World } from '../sim/world'
@@ -47,28 +48,39 @@ interface HerdSpec {
   scale: [number, number]
   /** How far members stray from the herd centre, metres. */
   spread: number
+  /**
+   * How hard the species takes a low pass, as a multiplier on the shove. 0 would
+   * be an animal that never looks up.
+   *
+   * This is the one number in the file that is about behaviour rather than
+   * placement, and it is worth more than a seventh species: a herd that scatters
+   * when your shadow crosses it is the difference between a landscape with
+   * animals drawn on it and a landscape with animals in it. Deer bolt, turtles
+   * essentially do not, and both are true.
+   */
+  startle: number
 }
 
 const HERDS: Record<BiomeId, HerdSpec | null> = {
   // Flocks in the pastures between the hedgerows.
-  field: { kind: 'sheep', chance: 0.22, size: [5, 11], maxSlope: 0.22, band: [0.03, 0.7], shore: 0, scale: [2.2, 2.8], spread: 34 },
+  field: { kind: 'sheep', chance: 0.22, size: [5, 11], maxSlope: 0.22, band: [0.03, 0.7], shore: 0, scale: [2.2, 2.8], spread: 34, startle: 1.0 },
   // Small groups at the edges of the clearings.
-  valley: { kind: 'deer', chance: 0.12, size: [3, 6], maxSlope: 0.3, band: [0.02, 0.6], shore: 0, scale: [2.4, 3.0], spread: 26 },
+  valley: { kind: 'deer', chance: 0.12, size: [3, 6], maxSlope: 0.3, band: [0.02, 0.6], shore: 0, scale: [2.4, 3.0], spread: 26, startle: 1.45 },
   // Strings of them on ledges the trees cannot reach.
-  alpine: { kind: 'ibex', chance: 0.1, size: [3, 7], maxSlope: 0.5, band: [0.35, 0.8], shore: 0, scale: [2.0, 2.6], spread: 30 },
+  alpine: { kind: 'ibex', chance: 0.1, size: [3, 7], maxSlope: 0.5, band: [0.35, 0.8], shore: 0, scale: [2.0, 2.6], spread: 30, startle: 0.9 },
   // A pink crescent on the alkali shore of the playa. Shore species take the
   // full height band: the waterline's *fraction* of the height range moves with
   // the day's water roll, so gating them by band as well silently starves them
   // on high-water days — the shore distance is the only filter that means
   // anything to a wading bird.
-  mesa: { kind: 'flamingo', chance: 0.3, size: [7, 14], maxSlope: 0.14, band: [0, 1], shore: 14, scale: [1.8, 2.2], spread: 55 },
+  mesa: { kind: 'flamingo', chance: 0.3, size: [7, 14], maxSlope: 0.14, band: [0, 1], shore: 14, scale: [1.8, 2.2], spread: 55, startle: 1.3 },
   // Hauled out on the sand below the headlands.
-  coastal: { kind: 'seal', chance: 0.3, size: [4, 9], maxSlope: 0.16, band: [0, 1], shore: 12, scale: [2.6, 3.4], spread: 24 },
+  coastal: { kind: 'seal', chance: 0.3, size: [4, 9], maxSlope: 0.16, band: [0, 1], shore: 12, scale: [2.6, 3.4], spread: 24, startle: 0.45 },
   volcanic: null,
   // Up the beaches, barely moving, exactly as advertised. Slope and shore match
   // the palms' tolerances — tropical islands rise steeply, and a stricter gate
   // left every beach empty.
-  archipelago: { kind: 'turtle', chance: 0.25, size: [3, 6], maxSlope: 0.32, band: [0, 1], shore: 20, scale: [2.0, 2.6], spread: 22 },
+  archipelago: { kind: 'turtle', chance: 0.25, size: [3, 6], maxSlope: 0.32, band: [0, 1], shore: 20, scale: [2.0, 2.6], spread: 22, startle: 0.15 },
 }
 
 const CELL = 384
@@ -76,7 +88,24 @@ const RADIUS = 2100
 const REDRAW_AT = CELL * 0.6
 const MAX = 240
 
-export function Herds({ world }: { world: World }) {
+/**
+ * How close the plane has to come before anything notices, in metres — and the
+ * distance is measured in three dimensions on purpose. A pass at three hundred
+ * metres is ignored entirely; you have to actually come down to the deck to put
+ * a flock up. That makes the low line over a pasture worth flying for its own
+ * sake, which is the whole point of putting animals in a gliding game.
+ */
+const STARTLE_RADIUS = 95
+/** Shove at the centre of that radius, m/s². Falls off linearly to nothing at the edge. */
+const STARTLE_ACCEL = 26
+/** Nothing here outruns a paper plane. */
+const STARTLE_SPEED = 11
+/** Pull back toward the wander curve. Low, so a scattered herd takes a while to re-form. */
+const HOME_SPRING = 0.9
+/** Just under critical damping for that spring, so they mill a little on the way back. */
+const DRAG = 2
+
+export function Herds({ world, planeRef }: { world: World; planeRef: React.RefObject<Group | null> }) {
   const camera = useThree((s) => s.camera)
   const spec = HERDS[world.biome]
 
@@ -95,6 +124,13 @@ export function Herds({ world }: { world: World }) {
       rate: new Float32Array(MAX),
       orbit: new Float32Array(MAX),
       size: new Float32Array(MAX),
+      // Displacement away from the wander curve, and its velocity. The only
+      // state in the file: the wander itself is a closed curve and needs none,
+      // but an animal that ran somewhere has to still be there next frame.
+      offX: new Float32Array(MAX),
+      offZ: new Float32Array(MAX),
+      velX: new Float32Array(MAX),
+      velZ: new Float32Array(MAX),
       count: 0,
     }
   }, [world, spec])
@@ -104,13 +140,18 @@ export function Herds({ world }: { world: World }) {
 
   useFrame((_, dt) => {
     if (!built || !spec) return
-    clock.current += Math.min(dt, 0.1)
+    const step = Math.min(dt, 0.1)
+    clock.current += step
     const p = camera.position
     if (last.current.distanceTo(p) >= REDRAW_AT) {
       last.current.copy(p)
       scatter(world, spec, built, p.x, p.z)
     }
-    animate(world, spec, built, clock.current)
+    // The plane, not the camera, is what frightens them — the camera trails it by
+    // tens of metres, which is enough to put the shove behind the animals rather
+    // than under them. This runs before Simulation's own frame callback, so the
+    // position is one frame stale; at 22 m/s that is 40 cm.
+    animate(world, spec, built, clock.current, step, planeRef.current)
   })
 
   if (!built) return null
@@ -125,6 +166,10 @@ interface Built {
   rate: Float32Array
   orbit: Float32Array
   size: Float32Array
+  offX: Float32Array
+  offZ: Float32Array
+  velX: Float32Array
+  velZ: Float32Array
   count: number
 }
 
@@ -146,6 +191,18 @@ function scatter(world: World, spec: HerdSpec, built: Built, cx: number, cz: num
   const cell0z = Math.floor((cz - RADIUS) / CELL)
   const cell1z = Math.floor((cz + RADIUS) / CELL)
   const r2 = RADIUS * RADIUS
+
+  // The herds themselves survive a rebuild — every one of them is a pure function
+  // of its cell — but the *index* an animal lands on does not, because the cell
+  // window has shifted. Flee state is keyed by index, so it has to go: keeping it
+  // would apply one animal's panic to another. An animal caught mid-bolt by a
+  // rebuild snaps back to its wander curve, which is a real if rare glitch. It is
+  // survivable because a rebuild happens every 230 m of travel — roughly ten
+  // seconds — and a startle is spent in three.
+  built.offX.fill(0)
+  built.offZ.fill(0)
+  built.velX.fill(0)
+  built.velZ.fill(0)
 
   let n = 0
   for (let ciz = cell0z; ciz <= cell1z && n < MAX; ciz++) {
@@ -212,14 +269,29 @@ function scatter(world: World, spec: HerdSpec, built: Built, cx: number, cz: num
  * The wander: each animal circles its home on two incommensurate sines, which
  * from the air reads as grazing drift rather than orbiting. Heading follows the
  * motion. ~200 height samples per frame, which is nothing.
+ *
+ * Laid over that, the startle: a shove away from the plane when it comes low
+ * enough, against a spring back to the curve. A damped spring rather than a
+ * scripted animation because it gets the whole shape for free — the burst, the
+ * slowing, the milling about, and the drift back to grazing — and because it
+ * needs four numbers per animal rather than a state machine.
  */
-function animate(world: World, spec: HerdSpec, built: Built, t: number) {
+function animate(world: World, spec: HerdSpec, built: Built, t: number, dt: number, plane: Group | null) {
   const hf = world.heightfield
+  // No plane yet (the first frames of a world) means nothing to run from.
+  const px = plane ? plane.position.x : Infinity
+  const py = plane ? plane.position.y : 0
+  const pz = plane ? plane.position.z : 0
+  const damp = Math.max(0, 1 - DRAG * dt)
+  const shove = STARTLE_ACCEL * spec.startle * dt
+
   for (let i = 0; i < built.count; i++) {
     const w = built.phase[i] + t * built.rate[i]
     const r = built.orbit[i]
-    const x = built.home[i * 2] + Math.cos(w) * r
-    const z = built.home[i * 2 + 1] + Math.sin(w * 0.83 + 1.7) * r
+    const ox = built.offX[i]
+    const oz = built.offZ[i]
+    const x = built.home[i * 2] + Math.cos(w) * r + ox
+    const z = built.home[i * 2 + 1] + Math.sin(w * 0.83 + 1.7) * r + oz
     // Velocity of the same curve, for the heading.
     const vx = -Math.sin(w) * built.rate[i] * r
     const vz = Math.cos(w * 0.83 + 1.7) * 0.83 * built.rate[i] * r
@@ -228,8 +300,38 @@ function animate(world: World, spec: HerdSpec, built: Built, t: number) {
     // Flamingos stand in the shallows; everyone else stays on the ground.
     if (spec.kind === 'flamingo' && hf.hasWater && y < hf.waterLevel) y = hf.waterLevel
 
+    let fx = built.velX[i]
+    let fz = built.velZ[i]
+    const ax = x - px
+    const ay = y - py
+    const az = z - pz
+    const d2 = ax * ax + ay * ay + az * az
+    if (d2 < STARTLE_RADIUS * STARTLE_RADIUS) {
+      // Straight away from the plane, but along the ground — nothing here flies,
+      // so the vertical part of the gap only decides how frightening the pass was.
+      const flat = Math.hypot(ax, az) || 1
+      const push = (1 - Math.sqrt(d2) / STARTLE_RADIUS) * shove
+      fx += (ax / flat) * push
+      fz += (az / flat) * push
+    }
+    fx = (fx - ox * HOME_SPRING * dt) * damp
+    fz = (fz - oz * HOME_SPRING * dt) * damp
+    const speed = Math.hypot(fx, fz)
+    if (speed > STARTLE_SPEED) {
+      fx = (fx / speed) * STARTLE_SPEED
+      fz = (fz / speed) * STARTLE_SPEED
+    }
+    built.velX[i] = fx
+    built.velZ[i] = fz
+    built.offX[i] = ox + fx * dt
+    built.offZ[i] = oz + fz * dt
+
     POS.set(x, y, z)
-    QUAT.setFromAxisAngle(UP, Math.atan2(-vx, -vz))
+    // Heading off the total motion, so a bolting animal faces where it is going
+    // and turns round on its own when the spring walks it home. The flee term
+    // dwarfs the graze term whenever it is non-zero, which is why this is a sum
+    // rather than a blend.
+    QUAT.setFromAxisAngle(UP, Math.atan2(-(vx + fx), -(vz + fz)))
     const s = built.size[i]
     SCL.set(s, s, s)
     MATRIX.compose(POS, QUAT, SCL)
