@@ -2,11 +2,60 @@
 
 > A daily paper-plane gliding game in the browser. One landscape a day, as many flights as you like, best distance is your record. *Fly windfolded.*
 
-**Status:** the whole solo game is built — flight model, a 12 km procedural world
-with seven biomes, seeded daily worlds, air, par, landings, own-attempt ghosts,
-localStorage persistence, and the share card. What remains is the backend half:
-other players' ghost trails and the percentile line. A streak was built and cut.
-See [Built so far](#built-so-far).
+**Status:** the solo game is complete and the first multiplayer layer is live.
+What remains from the original plan: other players' ghost trails and the share
+card's percentile line, both waiting on the ghost backend. A streak was built
+and cut. See [The game today](#the-game-today) for what exists and
+[Built so far](#built-so-far) for how it got that way.
+
+---
+
+## The game today
+
+Everything currently in the shipped build, at a glance:
+
+**The world.** One 12 km procedural landscape per day, identical for everyone on
+Earth, from a seed derived from the date. Seven biomes on rotation — alpine,
+mesa, coastal, valley, volcanic, field, archipelago — each day drawing its own
+relief, water, one or two structural landforms (rivers, canyons, caldera,
+escarpment, dunes, terraces, buttes, glacial trough, crater field), a colour
+grade, forests with per-day character and rare blossom/autumn seasons, farmland
+quilts, beaches with wet sand, herds of animals, cloud shadows, swell and surf
+on the sea, and a sky with sun halo, daylight stars, a moon with earthshine,
+and the occasional falling star. `R` rerolls a world for testing; `?world=N`
+links to any specific one.
+
+**The flight.** Pointer-only controls (pitch and roll), arcade aerodynamics
+with a real energy model: dive to build speed, flare to spend it, stall and
+recover. Thermals, ridge lift, and wind-aligned thermal streets on flat days
+are the lift to hunt; cumulus marks the thermals, so the sky is a map. Score is
+path distance flown. A flared, level touchdown on gentle ground is a landing,
+not a crash. Restart is instant.
+
+**The day's shape.** Every world has a *par* — the distance a headless
+autopilot ("the paper pilot") achieves on it, computed client-side from the
+seed — so each day has a completable goal. Best distance and attempt count
+persist per world in localStorage; refreshing mid-flight still burns the
+attempt. A tab left open picks up the new world at midnight Pacific.
+
+**The sharing.** One click copies a plain-text card — world name, distance,
+flights, par verdict, landing badge, an altitude-profile strip of the best
+flight, and a link that opens that exact world as a challenge.
+
+**The others.** An anonymous presence layer over a tiny Redis-backed API:
+every finished flight leaves its resting point, and other players' planes lie
+where they came down — upright if landed, crumpled if crashed. Pilots carry a
+call sign (dealt from curated word lists, rerollable, or typed — gated
+server-side); a label floats above each signed dart, "Gloaming Fox · 2.7 km",
+fading in as you approach. The splash counts the pooled total: "pilots have
+flown 123 km here." Your own attempts also stay on screen as faint ghost
+lines, your best brighter than the rest.
+
+**The rest of the feel.** Generated ambient music, seeded per day like the
+terrain, that hears the flight: bells rise with thermal lift, altitude opens
+the filter, a gentle landing rings a resolved chime. A blurred veil covers
+world swaps ("Imagining new worlds…"). The plane is a folded dart that sunlight
+transmits through, with a ground-shadow that doubles as a landing aid.
 
 **Name:** `Windfold` — decided. The working title was `Paper Trail`, dropped because
 Newfangled Games' 2024 puzzle game owns that name in search. Windfold was chosen for
@@ -72,7 +121,7 @@ These define the product. Features that violate them don't get built.
 2. **Unlimited attempts. Best flight is your record.** Retry as much as you like; the longest distance sticks. **Attempts are counted and shown** — reaching 1,800m in three flights is a different achievement from reaching it in thirty.
 3. **Ghost trails.** You see the flight paths of other players who flew today, drawn as glowing 3D ribbons in cyan, purple, and pink. Your own earlier attempts show too, faintly.
 4. **Wordle-style share card** on completion — plain text, emoji, copyable, survives being pasted into WhatsApp.
-5. **No accounts. No signup. No tracking.** No analytics scripts, no third-party requests, no email capture, no ads.
+5. **No accounts. No signup. No tracking.** No analytics scripts, no third-party requests, no email capture, no ads. Call signs are not accounts: stored locally, optional, never unique, never authenticated.
 6. **No streak.** One was built and cut before launch: the world and the card are what earn the return visit, and a guilt counter that dies with cleared browser data was more stress than reward in a game whose whole promise is relaxing.
 7. **Zero onboarding.** No tutorial, no modal, no cookie banner. Controls must be discoverable in about two seconds.
 
@@ -155,6 +204,9 @@ Beautiful landscapes are as much the reason to return as the score is.
 
 The signature visual: a valley threaded with dozens of glowing arcs.
 
+*Status: your own ghosts are built (faint white lines, best brightest); other
+players' trails below are the design for the ghost backend, still unbuilt.*
+
 **Other players' ghosts**
 
 - Record each flight's path at 10Hz as `[x, y, z]`, quantised to `int16`, gzipped. A full flight is a couple of kilobytes.
@@ -206,6 +258,7 @@ today") arrives with the backend.
 | --- | --- | --- |
 | Best distance, attempt count, best flight's altitude profile, per world | `localStorage` | Until the user clears browser data |
 | Music on/off preference | `localStorage` | Until the user clears browser data |
+| Call sign (dealt or typed) | `localStorage` | Until the user clears browser data |
 | Resting point + metres per flight, anonymous aggregate per world | Redis (presence layer) | 14 days, then expired |
 | Best distance + attempt count + opaque per-day token (planned, ghost layer) | D1 | ~7 days, then purged |
 | Gzipped trail of the best flight (planned, ghost layer) | R2 | ~7 days, then purged |
@@ -290,29 +343,42 @@ No external fonts, no CSS frameworks, no component libraries.
 src/sim/          no React, no scene graph — steppable headlessly
   rng.ts          mulberry32 + FNV-1a seed hashing
   noise.ts        seeded Perlin, fbm / ridged / billow
-  terrain.ts      heightfield generation, per-day shape and landform, sampling
+  terrain.ts      heightfield generation, per-day shape and landforms, sampling
   palette.ts      seven biome palettes in HSL, seeded hue rotation, daily grade
-  air.ts          wind, thermal columns, ridge lift
-  flight.ts       the flight model: fixed-timestep aero integrator
+  air.ts          wind, thermal columns, ridge lift, thermal streets
+  flight.ts       the flight model: fixed-timestep aero integrator, landings
+  par.ts          the paper pilot: chase autopilot + the day's par
   tuning.ts       every tunable number, mutable for the live panel
   world.ts        day number -> seed -> biome, terrain, air, launch site, sun, moon
-  flora.ts        where forest grows, what fills the ground it does not cover
+  flora.ts        forests, understories, per-day forest character and seasons
+src/game/         the loop around the flying
+  persist.ts      per-world records, the in-flight attempt marker, localStorage
+  share.ts        the share card and the clipboard
+  callsign.ts     dealt, rerollable, or typed pilot names
+  net.ts          the presence wire: flight beacons in, world presence out
 src/render/       R3F components; all transforms driven from one useFrame
-  Terrain.tsx     vertex-coloured heightfield: forest, strata, meadow, snow, aspect
-  Trees.tsx       two tree species plus the biome's understory, streamed
+  Terrain.tsx     vertex-coloured heightfield + per-pixel detail + cloud shadows
+  Trees.tsx       two tree species plus two understories per biome, streamed
   Clouds.tsx      cumulus billboards, one per thermal
-  Water.tsx       fresnel + glitter + ripple, no render target
+  Water.tsx       fresnel, glitter, swell, whitecaps, surf, soft shorelines
   Birds.tsx       flocks circling the nearest columns, and one skein passing through
   Herds.tsx       animals: sheep, deer, ibex, flamingos, seals, turtles
+  RestingPlanes.tsx  other players' darts on the ground, with floating name labels
+  Ghosts.tsx      your own previous attempts as faint lines, best brightest
+  PaperPlane.tsx  the folded dart: crease facets, sun transmission, cloud shade
+  Trail.ts        the live wake line
+  Thermals.tsx    dust columns marking lift at close range
   Motes.tsx       near-field dust, wrapped around the camera
   Sky.tsx         gradient dome: sun, moon, cirrus, counter-glow, rays, ice halo,
                   daylight stars, falling stars
-  atmosphere.ts   the single fog constant every shader has to agree on
+  Scene.tsx       the simulation loop, camera, ground shadow, persistence hooks
+  atmosphere.ts   the fog constant and the cloud-shadow field every shader shares
 src/audio/        Web Audio synthesis; no React inside music.ts
-  music.ts        the day's generated score
-  useMusic.ts     owns the one instance for the session
-src/ui/           HUD, vario, results, tuning panel
+  music.ts        the day's generated score, coupled to lift and altitude
+  useMusic.ts     owns the one instance, feeds it the flight
+src/ui/           HUD, vario, results, share, signature, tuning panel
 src/dev/          headless flight-model harness
+api/              Vercel edge functions: the presence layer over Redis
 ```
 
 **Flight model.** Lift proportional to `V²·CL(α)` applied perpendicular to the relative
@@ -839,18 +905,14 @@ sells the flight, not the habit; the world is the reason to come back.
 
 ---
 
-## Spec gaps to resolve before step 4
+## Spec gaps to resolve before the ghost backend
 
-Two contradictions in the sections above, found while building. Neither affects the
-current build — both land the moment the backend does.
-
-**Nothing serves the percentile.** The share card needs "Top 12% today", but `/day` is
-aggressively edge-cached, `/ghosts` is a trail bundle, and `POST /flight` has no
-specified response. Cheapest fix: return the percentile from `POST /flight`. Otherwise
+**Nothing serves the percentile.** The share card wants "Top 12% today", but `/day` is
+aggressively edge-cached, `/ghosts` is a trail bundle, and the flight beacon has no
+specified response. Cheapest fix: return the percentile from the flight POST. Otherwise
 ship a coarse distance histogram inside the ghost bundle and compute it client-side.
 
-**Refresh reconciliation contradicts the persistence table.** *Attempt counting* says an
-unresolved attempt is logged "at its last recorded sample", but *Persistence & privacy*
-keeps own-attempt trails in memory only. After a refresh there is no sample to read.
-Needs a small in-flight marker — attempt-started plus last distance — written to
-`localStorage` on a timer, which is a third thing in that table.
+~~**Refresh reconciliation contradicts the persistence table.**~~ Resolved: the
+in-flight marker exists — world plus distance-so-far, refreshed every two seconds
+while flying, reconciled on the next load — so an abandoned attempt is logged at
+its last recorded sample, exactly as the attempt rules demand.
