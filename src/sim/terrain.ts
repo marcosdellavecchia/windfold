@@ -44,6 +44,16 @@ export interface Heightfield {
    * the flora masks in `sim`.
    */
   wet: Float32Array
+  /**
+   * The cell each cell drains into, or -1 for a basin with no outlet. See
+   * `computeDrainage`.
+   *
+   * This is the river network itself, not a by-product of it: the accumulation
+   * pass has to decide a downstream neighbour for every cell anyway, and that set
+   * of choices is a tree whose branches are exactly the watercourses. Keeping it
+   * is what lets a stream be built as geometry rather than painted as a stain.
+   */
+  flowTo: Int32Array
 }
 
 /**
@@ -577,9 +587,12 @@ export function generateHeightfield(biome: BiomeId, rng: Rng): Heightfield {
 
   const hasWater = shape.waterFrac > 0
   const waterLevel = hasWater ? min + (max - min) * shape.waterFrac : min - 1
-  const wet = computeDrainage(data, n, min, max, waterLevel)
+  const { wet, flowTo } = computeDrainage(data, n, min, max, waterLevel)
 
-  return { size: WORLD_SIZE, seg, cell, data, min, max, waterLevel, hasWater, landform, landform2, hybrid, wet }
+  return {
+    size: WORLD_SIZE, seg, cell, data, min, max, waterLevel, hasWater,
+    landform, landform2, hybrid, wet, flowTo,
+  }
 }
 
 /** Buckets for the ordering pass below. At 800 m of relief each is about 20 cm. */
@@ -625,7 +638,13 @@ const DRAIN_FULL = 0.999
  * Paint only. Nothing here touches a height, so it cannot move the flight model —
  * the one thing carving a real riverbed would certainly have done.
  */
-function computeDrainage(data: Float32Array, n: number, min: number, max: number, waterLevel: number): Float32Array {
+function computeDrainage(
+  data: Float32Array,
+  n: number,
+  min: number,
+  max: number,
+  waterLevel: number,
+): { wet: Float32Array; flowTo: Int32Array } {
   const count = n * n
   const span = Math.max(max - min, 1e-6)
   const scale = (DRAIN_BUCKETS - 1) / span
@@ -666,6 +685,7 @@ function computeDrainage(data: Float32Array, n: number, min: number, max: number
   for (let k = 0; k < count; k++) rank[order[k]] = k
 
   const flow = new Float32Array(count).fill(1)
+  const flowTo = new Int32Array(count).fill(-1)
   const diag = 1 / Math.SQRT2
   for (let k = 0; k < count; k++) {
     const i = order[k]
@@ -694,6 +714,7 @@ function computeDrainage(data: Float32Array, n: number, min: number, max: number
         }
       }
     }
+    flowTo[i] = bestIdx
     if (bestIdx >= 0) flow[bestIdx] += flow[i]
   }
 
@@ -742,7 +763,7 @@ function computeDrainage(data: Float32Array, n: number, min: number, max: number
     // watercourse painted on a lake bed would show through it.
     wet[i] = data[i] <= waterLevel ? 0 : smoothstep(show, full, logs[i])
   }
-  return wet
+  return { wet, flowTo }
 }
 
 /**
@@ -878,6 +899,37 @@ function borderMask(x: number, z: number): number {
   const fz = Math.abs(z) / HALF_WORLD
   const f = Math.max(fx, fz)
   return 1 - smoothstep(0.86, 1.0, f) * 0.92
+}
+
+/**
+ * Height of the *drawn* surface — the two triangles per quad the terrain mesh is
+ * actually built from, split on the diagonal from (ix, iz+1) to (ix+1, iz).
+ *
+ * Not the same surface as `sampleHeight`. Bilinear and a split quad agree at the
+ * four corners and disagree everywhere between, by the quad's twist: measured
+ * along a waterline that is a couple of metres on most maps and up to twelve on
+ * an archipelago. Which one is wanted depends on the question. Anything asking
+ * "how high is the ground here" for the physics wants the smooth one and always
+ * has. Anything that has to *sit on* the ground without poking through it —
+ * water meeting a shore, a ribbon laid along a valley — wants this one, because
+ * this is the surface the player can see.
+ */
+export function meshHeight(hf: Heightfield, x: number, z: number): number {
+  const n = hf.seg + 1
+  const gx = clamp((x + HALF_WORLD) / hf.cell, 0, hf.seg)
+  const gz = clamp((z + HALF_WORLD) / hf.cell, 0, hf.seg)
+  const ix = Math.min(n - 2, Math.floor(gx))
+  const iz = Math.min(n - 2, Math.floor(gz))
+  const u = gx - ix
+  const v = gz - iz
+  const i = iz * n + ix
+  const h00 = hf.data[i]
+  const h10 = hf.data[i + 1]
+  const h01 = hf.data[i + n]
+  const h11 = hf.data[i + n + 1]
+  return u + v < 1
+    ? h00 + (h10 - h00) * u + (h01 - h00) * v
+    : h11 + (h10 - h11) * (1 - v) + (h01 - h11) * (1 - u)
 }
 
 /** Bilinear height sample. Clamps outside the map rather than throwing. */

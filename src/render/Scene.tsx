@@ -24,6 +24,7 @@ import { isTurboHeld, readAxis, setCommitHandler } from '../input'
 import { flushHud, writeHud } from '../state'
 import { Terrain } from './Terrain'
 import { Water } from './Water'
+import { Streams } from './Streams'
 import { Clouds } from './Clouds'
 import { Trees } from './Trees'
 import { Birds } from './Birds'
@@ -76,6 +77,7 @@ export function Scene({
       <Terrain world={world} />
       <Trees world={world} />
       <Water world={world} />
+      <Streams world={world} />
       <Thermals world={world} />
       <Clouds world={world} />
       <Birds world={world} />
