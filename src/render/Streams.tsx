@@ -10,8 +10,10 @@ import {
   Vector2,
 } from 'three'
 import type { World } from '../sim/world'
-import { rgbToHex } from '../sim/palette'
+import { rgbToHex, type Rgb } from '../sim/palette'
 import { meshHeight, type Heightfield } from '../sim/terrain'
+import { Noise2D } from '../sim/noise'
+import { mulberry32 } from '../sim/rng'
 import { CLOUD_SHADOW_GLSL, FOG_DENSITY, cloudShadowSeed } from './atmosphere'
 
 /**
@@ -41,6 +43,16 @@ const CHANNEL = 0.5
 const WIDTH_MIN = 7
 const WIDTH_MAX = 22
 /**
+ * Floor on the finished width, after the steepness and the wobble have both had
+ * a go at it. Between them they could take a headwater stream under three
+ * metres, and since the outer fifth of the ribbon is feathered to nothing that
+ * leaves well under a metre of solid water — which is a sub-pixel thread from
+ * any altitude worth flying at, so it simply disappears.
+ */
+const WIDTH_FLOOR = 4.5
+/** What a spring is, as a fraction of the width it would otherwise start at. */
+const HEAD_TAPER = 0.16
+/**
  * Metres of daylight between the ribbon and the ground it lies on.
  *
  * Small enough to sit in the channel, large enough not to z-fight with a triangle
@@ -57,7 +69,7 @@ const LIFT = 0.7
  * spline turns those corners into bends, for three times the triangles of
  * something that was already costing under a hundred kilobytes.
  */
-const SUB = 3
+const SUB = 4
 /**
  * Relaxation passes that round off the eight-way zigzag before the spline runs.
  *
@@ -67,6 +79,33 @@ const SUB = 3
  * something worth interpolating.
  */
 const SMOOTH_PASSES = 2
+/**
+ * How much the width wanders, and over what distance.
+ *
+ * Width from flow alone makes two perfectly parallel curves — an extruded strip,
+ * which is what it looked like. A real river is pinching and opening the whole
+ * way down: bars, narrows, wide slow reaches. At a 140 m wavelength consecutive
+ * nodes stay close enough to vary smoothly rather than to flicker, since they are
+ * only 32 to 45 m apart.
+ */
+const WOBBLE = 0.34
+const WOBBLE_SCALE = 140
+/**
+ * How much wider the mesh is built than the water it will end up showing.
+ *
+ * A lake's outline is not drawn: it is wherever the terrain crosses the water
+ * plane, and the shader finds it per pixel. That is the whole reason a lake reads
+ * as natural and an extruded ribbon does not — the ribbon's outline is a polyline
+ * through vertices eleven metres apart, and at close range those facets are
+ * exactly what you see.
+ *
+ * So the mesh here is only a conservative bound, comfortably larger than the
+ * river, and the fragment shader decides where the water actually stops. The
+ * silhouette then has pixel resolution rather than vertex resolution, and it can
+ * take a noise term along the way and come out ragged like a bank instead of
+ * parallel like a road marking.
+ */
+const BOUND = 1.55
 
 export function Streams({ world }: { world: World }) {
   const { mesh, material } = useMemo(() => {
@@ -130,13 +169,26 @@ export function Streams({ world }: { world: World }) {
     // --- ribbon ---------------------------------------------------------------
     const quads = touched.length * SUB
     const pos = new Float32Array(quads * 4 * 3)
-    /** -1 to 1 across the ribbon, for the edge fade. */
+    /** Signed metres from the centreline. The mesh reaches BOUND; water does not. */
     const side = new Float32Array(quads * 4)
+    /** Metres the water should reach at this point, for the shader to cut against. */
+    const halfW = new Float32Array(quads * 4)
     /** Downstream direction in xz, so the surface scrolls the way the water goes. */
     const flow = new Float32Array(quads * 4 * 2)
     /** 0..1 whitewater, from how hard the stretch falls. */
     const foam = new Float32Array(quads * 4)
     const idx = new Uint32Array(quads * 6)
+
+    const wobbleNoise = new Noise2D(mulberry32(world.seed ^ 0x71e4))
+    const halfWidth = (i: number, wet: number) => {
+      // Steepness thins it: partly because it is true — a mountain torrent is a
+      // crack and a lowland river is broad — and partly because a level ribbon on
+      // a steep cross-slope has further to reach before it finds the ground.
+      const narrow = 1 - 0.55 * Math.min(1, slopeAt(hf, i, n) / 0.6)
+      const wobble = 1 + wobbleNoise.noise(px[i] / WOBBLE_SCALE, pz[i] / WOBBLE_SCALE) * WOBBLE
+      const full = (WIDTH_MIN + (WIDTH_MAX - WIDTH_MIN) * norm(wet)) * narrow * wobble
+      return Math.max(full, WIDTH_FLOOR) * 0.5
+    }
 
     const cx: number[] = []
     const cz: number[] = []
@@ -160,9 +212,16 @@ export function Streams({ world }: { world: World }) {
       const p3x = dd >= 0 ? px[dd] : 2 * bx - ax
       const p3z = dd >= 0 ? pz[dd] : 2 * bz - az
 
-      const narrow = 1 - 0.55 * Math.min(1, slopeAt(hf, i, n) / 0.6)
-      const wa = (WIDTH_MIN + (WIDTH_MAX - WIDTH_MIN) * norm(hf.wet[i])) * 0.5 * narrow
-      const wb = (WIDTH_MIN + (WIDTH_MAX - WIDTH_MIN) * norm(hf.wet[j])) * 0.5 * narrow
+      // A head — nothing upstream carries enough flow to be drawn — starts from
+      // almost nothing rather than from the floor width. Without this every
+      // spring in the network began as a square-ended plank 4.5 m wide, which is
+      // the one place a river has no business having a straight edge at all.
+      const wa = halfWidth(i, hf.wet[i]) * (u < 0 ? HEAD_TAPER : 1)
+      // A node under the waterline carries no flow of its own — `wet` is zeroed
+      // there, because the lake already draws it. Taking its width at face value
+      // pinched every river mouth down to the minimum just as it should have been
+      // opening out, so the outlet inherits the width of the last dry cell.
+      const wb = halfWidth(j, hf.wet[j] > 0 ? hf.wet[j] : hf.wet[i])
 
       const straight = Math.hypot(bx - ax, bz - az) || 1
       // Whitewater where it falls steeply. Real streams are white exactly where
@@ -198,33 +257,45 @@ export function Streams({ world }: { world: World }) {
         const y0 = surfaceY(hf, cx[k], cz[k])
         const y1 = surfaceY(hf, cx[k + 1], cz[k + 1])
 
-        const l0x = cx[k] - t0z * w0
-        const l0z = cz[k] + t0x * w0
-        const r0x = cx[k] + t0z * w0
-        const r0z = cz[k] - t0x * w0
-        const l1x = cx[k + 1] - t1z * w1
-        const l1z = cz[k + 1] + t1x * w1
-        const r1x = cx[k + 1] + t1z * w1
-        const r1z = cz[k + 1] - t1x * w1
+        // The mesh runs out to BOUND; the water stops somewhere inside it. Heights
+        // are taken at the *water's* edge rather than at the bound, so the surface
+        // stays flat across the part that will actually be drawn instead of being
+        // dragged down by ground the shader is about to discard.
+        const b0 = w0 * BOUND
+        const b1 = w1 * BOUND
+        const ey0 = Math.min(
+          edgeY(hf, y0, cx[k] - t0z * w0, cz[k] + t0x * w0),
+          edgeY(hf, y0, cx[k] + t0z * w0, cz[k] - t0x * w0),
+        )
+        const ey1 = Math.min(
+          edgeY(hf, y1, cx[k + 1] - t1z * w1, cz[k + 1] + t1x * w1),
+          edgeY(hf, y1, cx[k + 1] + t1z * w1, cz[k + 1] - t1x * w1),
+        )
 
         const p = v * 3
-        pos[p] = l0x
-        pos[p + 1] = edgeY(hf, y0, l0x, l0z)
-        pos[p + 2] = l0z
-        pos[p + 3] = r0x
-        pos[p + 4] = edgeY(hf, y0, r0x, r0z)
-        pos[p + 5] = r0z
-        pos[p + 6] = l1x
-        pos[p + 7] = edgeY(hf, y1, l1x, l1z)
-        pos[p + 8] = l1z
-        pos[p + 9] = r1x
-        pos[p + 10] = edgeY(hf, y1, r1x, r1z)
-        pos[p + 11] = r1z
+        pos[p] = cx[k] - t0z * b0
+        pos[p + 1] = ey0
+        pos[p + 2] = cz[k] + t0x * b0
+        pos[p + 3] = cx[k] + t0z * b0
+        pos[p + 4] = ey0
+        pos[p + 5] = cz[k] - t0x * b0
+        pos[p + 6] = cx[k + 1] - t1z * b1
+        pos[p + 7] = ey1
+        pos[p + 8] = cz[k + 1] + t1x * b1
+        pos[p + 9] = cx[k + 1] + t1z * b1
+        pos[p + 10] = ey1
+        pos[p + 11] = cz[k + 1] - t1x * b1
 
-        side[v] = 1
-        side[v + 1] = -1
-        side[v + 2] = 1
-        side[v + 3] = -1
+        // Signed metres from the centreline, and the half-width the water should
+        // reach — both in metres, so the shader compares like with like.
+        side[v] = -b0
+        side[v + 1] = b0
+        side[v + 2] = -b1
+        side[v + 3] = b1
+        halfW[v] = w0
+        halfW[v + 1] = w0
+        halfW[v + 2] = w1
+        halfW[v + 3] = w1
         flow[v * 2] = t0x
         flow[v * 2 + 1] = t0z
         flow[(v + 1) * 2] = t0x
@@ -252,6 +323,7 @@ export function Streams({ world }: { world: World }) {
     const geo = new BufferGeometry()
     geo.setAttribute('position', new BufferAttribute(pos, 3))
     geo.setAttribute('aSide', new BufferAttribute(side, 1))
+    geo.setAttribute('aHalf', new BufferAttribute(halfW, 1))
     geo.setAttribute('aFlow', new BufferAttribute(flow, 2))
     geo.setAttribute('aFoam', new BufferAttribute(foam, 1))
     geo.setIndex(new BufferAttribute(idx, 1))
@@ -278,15 +350,34 @@ export function Streams({ world }: { world: World }) {
         uSkyTop: { value: new Color(rgbToHex(pal.skyTop)) },
         uSkyHorizon: { value: new Color(rgbToHex(pal.skyHorizon)) },
         uFog: { value: new Color(rgbToHex(pal.fog)) },
+        // The bed. `sand` is the shore tone the terrain already paints at every
+        // waterline, so a river running over it agrees with the beaches on the
+        // same map by construction rather than by a second guess at the palette.
+        uBed: { value: new Color(rgbToHex(pal.sand)) },
+        // The day's light, as a tint that carries hue without carrying
+        // brightness — the same trick the terrain uses on its slopes. Sun only:
+        // blending ambient in made it measurably worse, because ambient is the
+        // sky's own cool colour and it cancelled the warmth this exists to add.
+        //
+        // Everything else in the scene is lit: the terrain is multiplied by sun
+        // and ambient, and the lake borrows warmth from the sky it reflects. A
+        // ShaderMaterial with no lights in it shows raw palette colour, so the
+        // river was the one surface on the map wearing none of the day's
+        // weather, which is why it stayed cold blue under an orange sunset.
+        uLight: { value: new Color(...chromaOf(pal.sunLight)) },
+        uSun: { value: new Color(rgbToHex(pal.sun)) },
+        uSunDir: { value: world.sunDir.clone() },
         uTime: { value: 0 },
         uCloudWind: { value: new Vector2(world.air.windX, world.air.windZ) },
         uCloudSeed: { value: cloudShadowSeed(world.seed) },
       },
       vertexShader: /* glsl */ `
         attribute float aSide;
+        attribute float aHalf;
         attribute vec2 aFlow;
         attribute float aFoam;
         varying float vSide;
+        varying float vHalf;
         varying vec2 vFlow;
         varying float vFoam;
         varying vec3 vWorld;
@@ -295,6 +386,7 @@ export function Streams({ world }: { world: World }) {
           vec4 world4 = modelMatrix * vec4(position, 1.0);
           vWorld = world4.xyz;
           vSide = aSide;
+          vHalf = aHalf;
           vFlow = aFlow;
           vFoam = aFoam;
           vec4 mv = viewMatrix * world4;
@@ -312,7 +404,12 @@ export function Streams({ world }: { world: World }) {
         uniform float uTime;
         uniform vec2 uCloudWind;
         uniform float uCloudSeed;
+        uniform vec3 uBed;
+        uniform vec3 uLight;
+        uniform vec3 uSun;
+        uniform vec3 uSunDir;
         varying float vSide;
+        varying float vHalf;
         varying vec2 vFlow;
         varying float vFoam;
         varying vec3 vWorld;
@@ -326,8 +423,20 @@ export function Streams({ world }: { world: World }) {
           return mix(uFog, s, smoothstep(-0.03, 0.28, up));
         }
 
+        /**
+         * The moving surface. Wavelengths of roughly eleven and four metres,
+         * against a river seven to twenty-five wide — so the chop is a few waves
+         * across the channel rather than a texture beneath the pixel grid.
+         *
+         * This was sampled at 0.42, a lattice of 2.4 m, and driven into the
+         * normal at more than twice this strength. Sub-metre normal noise gives
+         * every pixel a wildly different Fresnel term, which arrives as harsh
+         * black and white speckle rather than as water. The lake's own waves are
+         * 20 to 80 m and its comments say why: the wavelengths matter more than
+         * they look.
+         */
         float ripple(vec2 p) {
-          return csNoise(p * 0.42) * 0.6 + csNoise(p * 1.15 + 4.2) * 0.4;
+          return csNoise(p * 0.09) * 0.62 + csNoise(p * 0.25 + 4.2) * 0.38;
         }
 
         void main() {
@@ -335,34 +444,97 @@ export function Streams({ world }: { world: World }) {
           // along the flow direction makes the water move *with the valley*
           // rather than in one direction across the whole map, and it costs an
           // attribute rather than a second texture.
-          vec2 drift = vWorld.xz - vFlow * (uTime * 7.0);
+          vec2 drift = vWorld.xz - vFlow * (uTime * 4.5);
           float r0 = ripple(drift);
-          float e = 1.6;
+          float e = 3.2;
           float rx = ripple(drift + vec2(e, 0.0)) - r0;
           float rz = ripple(drift + vec2(0.0, e)) - r0;
 
+          // Where the water actually stops, decided here rather than by the mesh.
+          //
+          // The bank wanders on two scales: a long one that opens the river out
+          // and pinches it closed over tens of metres, and a short one that
+          // roughens the margin itself. Neither is available to geometry at any
+          // sane vertex count, and both are what a real edge does. The mesh runs
+          // to BOUND either side and everything past this line is thrown away.
+          float bank = csNoise(vWorld.xz * 0.021 + 3.1) - 0.5;
+          bank += (csNoise(vWorld.xz * 0.115 + 8.7) - 0.5) * 0.45;
+          float reach = vHalf * (1.0 + bank * 0.62);
+          float dist = abs(vSide);
+          // Feathered in metres, not in fractions: a wide river and a narrow one
+          // have the same kind of edge, and scaling the softness with the width
+          // made big rivers look out of focus.
+          float alpha = 1.0 - smoothstep(reach - 1.6, reach, dist);
+          if (alpha <= 0.004) discard;
+
           // Pale at the banks, deeper mid-channel: a stream really is shallow at
           // its edges, and it stops the ribbon reading as a flat decal.
-          float mid = 1.0 - abs(vSide);
-          vec3 body = mix(uShallow, mix(uShallow, uDeep, 0.6), smoothstep(0.15, 0.85, mid));
+          float mid = clamp(1.0 - dist / max(reach, 0.001), 0.0, 1.0);
+          // A shallow stream is not the same optical object as a lake, and
+          // treating it as one leaves it navy on a day where every other surface
+          // is warm. Two things a real river has and this did not:
+          //
+          // The bed shows through. A metre of water over sand is mostly the
+          // colour of the sand, which is why a desert river is ochre and not
+          // blue. Nothing else in the scene was giving this ribbon the day's
+          // ground colour — the terrain is lit by the sun and the lake borrows
+          // warmth from the sky it reflects, while an unlit strip of raw
+          // palette water borrows from neither and sits in the frame as the one
+          // cold object on a warm map.
+          // Depth across the channel: nothing at the banks, most in the middle.
+          float depth = smoothstep(0.2, 0.95, mid);
+          // The water column on its own, darker where there is more of it...
+          vec3 water = mix(uShallow, uDeep, depth * 0.45);
+          // ...and the bed underneath, showing through more at the edges than in
+          // the middle but never absent. Blending the bed only at the banks was
+          // the first attempt and it changed nothing worth seeing, because the
+          // middle of the channel is the part anyone actually looks at.
+          vec3 body = mix(uBed, water, 0.6 + depth * 0.12) * uLight;
 
           // The same reflection the lake has, for the same reason: a surface that
           // returns one fixed colour is not read as a surface. Chop only — the
           // ribbon is level across its width, so the sheet is flat and the waves
           // are all there is to tilt it.
-          vec3 nrm = normalize(vec3(-rx * 2.2, 1.0, -rz * 2.2));
+          vec3 nrm = normalize(vec3(-rx * 0.7, 1.0, -rz * 0.7));
           vec3 viewDir = normalize(cameraPosition - vWorld);
           vec3 refl = reflect(-viewDir, nrm);
           vec3 skyCol = skyTone(mix(max(refl.y, 0.0), 0.8, 0.45));
           float fres = pow(1.0 - clamp(dot(nrm, viewDir), 0.0, 1.0), 4.0);
-          vec3 col = mix(body, skyCol, clamp(fres, 0.0, 0.42));
-          col *= 0.94 + r0 * 0.12;
+          // And a floor under the reflection. Fresnel is right for a lake seen
+          // across its length — a grazing view is nearly all sky, which is
+          // exactly why the lake in the distance is the colour of the sunset. A
+          // river is only ever seen from more or less above, so it never earns
+          // any of that and stayed the one surface on the map wearing none of
+          // the day's light. The floor is what puts it back in the same weather
+          // as everything around it.
+          vec3 col = mix(body, skyCol, clamp(fres, 0.38, 0.55));
+          col *= 0.96 + r0 * 0.08;
 
-          // Whitewater where it falls steeply, and a little at the edges where
-          // the water is breaking over the bank.
+          // Whitewater where it falls steeply, and a trace where it breaks along
+          // the bank. The bank term is small: it used to be the loudest thing at
+          // the edge and it fought the contact shadow below, which is the cue
+          // that actually matters.
           float white = vFoam * (0.35 + 0.65 * smoothstep(0.35, 0.9, r0));
-          white += (1.0 - smoothstep(0.0, 0.45, mid)) * 0.25;
+          white += (1.0 - smoothstep(0.08, 0.5, mid)) * 0.12;
           col = mix(col, vec3(1.0), clamp(white, 0.0, 0.8) * 0.55);
+
+          // A dark line right at the waterline.
+          //
+          // Water sits below the ground it runs through, so its last metre is in
+          // the shadow of its own edge. The grid is far too coarse to cut a bank
+          // that could cast one — the narrowest trough 32 m cells can hold is
+          // about 96 m across, against a river of fourteen — so the shadow is
+          // painted instead. It is the whole difference between a ribbon lying on
+          // a hillside and water running through it, and it costs one smoothstep.
+          // Tighter and lighter than it was: at 34% over the outer third, a
+          // fourteen-metre river was more shadow than water.
+          col *= 1.0 - (1.0 - smoothstep(0.0, 0.2, mid)) * 0.2;
+
+          // The same glitter the lake carries. Two surfaces of the same water on
+          // the same map should catch the sun the same way, and without it a
+          // river stayed matte while the lake beside it sparkled.
+          vec3 hv = normalize(normalize(uSunDir) + viewDir);
+          col += uSun * pow(max(dot(nrm, hv), 0.0), 180.0) * 0.7;
 
           col *= cloudShadow(vWorld.xz, uCloudWind, uTime, uCloudSeed);
           col = mix(col, uFog, vFogAmt);
@@ -370,7 +542,7 @@ export function Streams({ world }: { world: World }) {
           // Feathered edges. The ribbon is a strip laid on a hillside, and a hard
           // boundary would draw its own outline; fading the last fifth lets the
           // water sit in the ground rather than on it.
-          gl_FragColor = vec4(col, smoothstep(0.0, 0.22, mid) * 0.92);
+          gl_FragColor = vec4(col, alpha * 0.92);
         }
       `,
     })
@@ -429,6 +601,12 @@ function surfaceY(hf: Heightfield, x: number, z: number): number {
  */
 function edgeY(hf: Heightfield, centreY: number, x: number, z: number): number {
   return Math.min(centreY, surfaceY(hf, x, z))
+}
+
+/** A colour's hue and saturation with its brightness divided out. */
+function chromaOf(c: Rgb): Rgb {
+  const mean = (c[0] + c[1] + c[2]) / 3
+  return mean < 1e-4 ? [1, 1, 1] : [c[0] / mean, c[1] / mean, c[2] / mean]
 }
 
 /** CHANNEL..1 remapped to 0..1, so width tracks flow across the visible range. */
