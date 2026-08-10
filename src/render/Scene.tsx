@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import {
-  CircleGeometry,
   Group,
   MathUtils,
+  Matrix4,
   Mesh,
   MeshBasicMaterial,
   Vector3,
@@ -33,7 +33,7 @@ import { Motes } from './Motes'
 import { FOG_DENSITY } from './atmosphere'
 import { Sky } from './Sky'
 import { Thermals } from './Thermals'
-import { PaperPlane } from './PaperPlane'
+import { PaperPlane, buildDartShadow } from './PaperPlane'
 import { Trail } from './Trail'
 
 export function Scene({
@@ -141,11 +141,16 @@ function Simulation({ world, par, planeRef, trail, onWorldReady, onFlightRested 
   // exactly when height matters: skimming a ridge or timing a flare, the
   // shadow reads your clearance better than the HUD number does.
   const blob = useMemo(() => {
-    const geo = new CircleGeometry(1, 20)
-    geo.rotateX(-Math.PI / 2)
     const m = new Mesh(
-      geo,
-      new MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0, depthWrite: false }),
+      buildDartShadow(),
+      new MeshBasicMaterial({
+        color: 0x000000,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        // The alpha in the geometry's colour attribute is what softens the edge.
+        vertexColors: true,
+      }),
     )
     m.frustumCulled = false
     return m
@@ -299,14 +304,31 @@ function Simulation({ world, par, planeRef, trail, onWorldReady, onFlightRested 
     if (fade <= 0.02) {
       blobMat.opacity = 0
     } else {
-      blobMat.opacity = 0.26 * fade
-      // Wider and softer as the plane climbs, like a real penumbra.
-      blob.scale.setScalar(2.4 + flight.aglHeight * 0.09)
+      blobMat.opacity = 0.3 * fade
       blob.position.set(flight.pos.x, groundY + 0.4, flight.pos.z)
-      // Lie on the slope rather than hovering flat inside it.
+
+      // Lie on the slope rather than hovering flat inside it, *and* point where
+      // the aircraft points. A disc needed only the first of those, which is why
+      // it never had a heading — and why on short final, when the shadow is the
+      // thing you are looking at, it was the one object in the frame admitting
+      // it was a stand-in.
       sampleGradient(world.heightfield, flight.pos.x, flight.pos.z, GRAD)
       NORMAL.set(-GRAD.x, 1, -GRAD.z).normalize()
-      blob.quaternion.setFromUnitVectors(UP, NORMAL)
+      // Heading flattened onto the slope: the component along the ground normal
+      // is removed, so a climbing aircraft does not foreshorten its own shadow.
+      SHADOW_Z.set(0, 0, 1).applyQuaternion(flight.quat)
+      SHADOW_Z.addScaledVector(NORMAL, -SHADOW_Z.dot(NORMAL))
+      if (SHADOW_Z.lengthSq() < 1e-6) SHADOW_Z.set(0, 0, 1)
+      SHADOW_Z.normalize()
+      SHADOW_X.crossVectors(NORMAL, SHADOW_Z)
+      BASIS.makeBasis(SHADOW_X, NORMAL, SHADOW_Z)
+      blob.quaternion.setFromRotationMatrix(BASIS)
+
+      // Wider and softer as the plane climbs, like a real penumbra — and
+      // narrower across the wings as it banks, because a shadow is the aircraft
+      // seen from underneath and a knife-edge one has almost no width to cast.
+      const grow = 0.95 + flight.aglHeight * 0.035
+      blob.scale.set(grow * (0.34 + 0.66 * Math.abs(Math.cos(flight.bank))), grow, grow)
     }
 
     // --- camera -------------------------------------------------------------
@@ -415,4 +437,6 @@ function Simulation({ world, par, planeRef, trail, onWorldReady, onFlightRested 
 
 const GRAD = { x: 0, z: 0 }
 const NORMAL = new Vector3()
-const UP = new Vector3(0, 1, 0)
+const SHADOW_X = new Vector3()
+const SHADOW_Z = new Vector3()
+const BASIS = new Matrix4()

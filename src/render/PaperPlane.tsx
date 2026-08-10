@@ -136,6 +136,78 @@ function csNoise(x: number, z: number): number {
  * Exported for the resting planes: the darts lying on the ground where other
  * players' flights ended are this same fold.
  */
+/**
+ * The dart's own outline, looking straight down: nose, both wingtips, and the
+ * shallow forward notch the fold leaves in the trailing edge.
+ *
+ * Kept here rather than next to the shadow that uses it, because it is the same
+ * planform `buildDart` folds up — and if the aircraft ever changes shape, the
+ * thing on the ground under it has to change with it or the two stop being the
+ * same object.
+ */
+const PLANFORM: Array<[number, number]> = [
+  [0, -2.4],
+  [-1.7, 1.85],
+  [-0.44, 1.68],
+  [0, 1.5],
+  [0.44, 1.68],
+  [1.7, 1.85],
+]
+
+/**
+ * The shadow, shaped like the aircraft casting it.
+ *
+ * It used to be a disc, which from the air is fine and on short final is the one
+ * thing in the frame admitting it is a stand-in — the moment the shadow matters
+ * most is the moment you are closest to it.
+ *
+ * Two rings around the planform rather than a flat silhouette: an inner one at
+ * full strength and an outer one at nothing, so the edge is a penumbra instead of
+ * a cut-out. Alpha rides in the fourth channel of the colour attribute, which
+ * three turns into USE_COLOR_ALPHA and multiplies into the material's own
+ * opacity — so the frame loop keeps one number to fade and the shape keeps its
+ * softness for free.
+ */
+export function buildDartShadow(): BufferGeometry {
+  const n = PLANFORM.length
+  let ccx = 0
+  let ccz = 0
+  for (const [x, z] of PLANFORM) {
+    ccx += x / n
+    ccz += z / n
+  }
+  const ring = (k: number) =>
+    PLANFORM.map(([x, z]) => [ccx + (x - ccx) * k, ccz + (z - ccz) * k] as [number, number])
+  const inner = ring(0.5)
+  const outer = ring(1.3)
+
+  const pos: number[] = []
+  const col: number[] = []
+  const push = (p: [number, number], a: number) => {
+    pos.push(p[0], 0, p[1])
+    col.push(1, 1, 1, a)
+  }
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n
+    // Core, flat at full strength.
+    push([ccx, ccz], 1)
+    push(inner[i], 1)
+    push(inner[j], 1)
+    // Skirt, fading to nothing at the outer ring.
+    push(inner[i], 1)
+    push(outer[i], 0)
+    push(outer[j], 0)
+    push(inner[i], 1)
+    push(outer[j], 0)
+    push(inner[j], 1)
+  }
+
+  const geo = new BufferGeometry()
+  geo.setAttribute('position', new BufferAttribute(new Float32Array(pos), 3))
+  geo.setAttribute('color', new BufferAttribute(new Float32Array(col), 4))
+  return geo
+}
+
 export function buildDart(): BufferGeometry {
   // Nose at -Z, tail at +Z. Wingspan ~3.4 m.
   const nose = [0, 0, -2.4]
