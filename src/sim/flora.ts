@@ -101,25 +101,52 @@ export interface DetailSpec {
   inForest: number
   /** If > 0, only within this many metres above the waterline. */
   shore: number
+  /**
+   * If > 0, also grows along watercourses: the drainage strength it needs to see.
+   * See `sampleWet`.
+   *
+   * The shore rule only ever knew about the lake, so every reed in the game grew
+   * on a lake margin and the rivers ran through bare ground — which is a large
+   * part of why they read as laid on the landscape rather than in it. Real
+   * water is followed by the things that want to be near it, and a river with
+   * reeds crowding its banks stops being a stripe and becomes a place.
+   *
+   * A band rather than a floor, since the middle of a channel is water: see the
+   * BANK_MAX check at the scatter.
+   */
+  riverbank: number
+  /**
+   * Scatter attempts per cell spent *specifically* on banks, on top of `density`.
+   *
+   * A budget of its own because the ordinary scatter is spread evenly over three
+   * and a half kilometres while the watercourses are about one percent of that
+   * area — measured, the whole visible network was collecting eleven to twenty-two
+   * plants, which lines nothing. Raising `density` instead would have multiplied
+   * the lake shores by the same factor and run them straight into the instance
+   * cap. These attempts are cheap: two rolls, a height and a drainage lookup, and
+   * the ones that miss stop there, well before the gradient and forest tests that
+   * actually cost anything.
+   */
+  bankDensity: number
 }
 
 export const DETAIL: Record<BiomeId, DetailSpec> = {
   // Talus and glacial erratics, on exactly the slopes the spruce cannot hold.
-  alpine: { kind: 'boulder', density: 8, slope: [0.35, 1.7], band: [0.05, 0.95], height: [4, 11], inForest: 0.35, shore: 0 },
+  alpine: { kind: 'boulder', density: 8, slope: [0.35, 1.7], band: [0.05, 0.95], height: [4, 11], inForest: 0.35, shore: 0, riverbank: 0, bankDensity: 0 },
   // Saguaro in the washes. The only vertical thing on a mesa day.
-  mesa: { kind: 'cactus', density: 6, slope: [0, 0.34], band: [0.08, 0.62], height: [4, 9], inForest: 1, shore: 0 },
+  mesa: { kind: 'cactus', density: 6, slope: [0, 0.34], band: [0.08, 0.62], height: [4, 9], inForest: 1, shore: 0, riverbank: 0, bankDensity: 0 },
   // Broken rock along the cliff tops and headlands.
-  coastal: { kind: 'boulder', density: 6, slope: [0.3, 1.5], band: [0, 0.9], height: [3, 8], inForest: 0.3, shore: 0 },
+  coastal: { kind: 'boulder', density: 6, slope: [0.3, 1.5], band: [0, 0.9], height: [3, 8], inForest: 0.3, shore: 0, riverbank: 0, bankDensity: 0 },
   // Bramble and scrub filling the clearings between the broadleaf stands.
-  valley: { kind: 'shrub', density: 11, slope: [0, 0.7], band: [0, 0.78], height: [2, 4.5], inForest: 1, shore: 0 },
+  valley: { kind: 'shrub', density: 11, slope: [0, 0.7], band: [0, 0.78], height: [2, 4.5], inForest: 1, shore: 0, riverbank: 0, bankDensity: 0 },
   // Basalt columns. Cooling lava cracks into hexagons, so these are hexagonal.
-  volcanic: { kind: 'spire', density: 5, slope: [0.1, 1.2], band: [0.05, 0.88], height: [8, 22], inForest: 1, shore: 0 },
+  volcanic: { kind: 'spire', density: 5, slope: [0.1, 1.2], band: [0.05, 0.88], height: [8, 22], inForest: 1, shore: 0, riverbank: 0, bankDensity: 0 },
   // Hay bales on the open flats, never under the trees. Twice life size, because
   // a true 1.5 m drum vanishes from 300 m up — the same slightly-wrong-on-purpose
   // licence as the flattened sun, spent on the ground.
-  field: { kind: 'bale', density: 6, slope: [0, 0.22], band: [0.03, 0.85], height: [2.4, 3.4], inForest: 0, shore: 0 },
+  field: { kind: 'bale', density: 6, slope: [0, 0.22], band: [0.03, 0.85], height: [2.4, 3.4], inForest: 0, shore: 0, riverbank: 0, bankDensity: 0 },
   // Palms right down the beach, in the band the forest mask is told to avoid.
-  archipelago: { kind: 'palm', density: 9, slope: [0, 0.36], band: [0, 0.4], height: [10, 18], inForest: 1, shore: 95 },
+  archipelago: { kind: 'palm', density: 9, slope: [0, 0.36], band: [0, 0.4], height: [10, 18], inForest: 1, shore: 95, riverbank: 0, bankDensity: 0 },
 }
 
 /**
@@ -130,13 +157,19 @@ export const DETAIL: Record<BiomeId, DetailSpec> = {
  * reason: true-scale reeds vanish from a glider.
  */
 export const DETAIL2: Record<BiomeId, DetailSpec | null> = {
-  alpine: null,
-  mesa: null,
-  coastal: { kind: 'tuft', density: 8, slope: [0, 0.45], band: [0, 1], height: [0.9, 1.6], inForest: 0.4, shore: 55 },
-  valley: { kind: 'reed', density: 7, slope: [0, 0.3], band: [0, 1], height: [1.6, 2.8], inForest: 1, shore: 14 },
+  // Grass along the meltwater, and nowhere else — `shore` is 0, so the drainage
+  // is the only thing that lets these in. An alpine map had no second understory
+  // at all, which left its streams running through bare scree.
+  alpine: { kind: 'tuft', density: 10, slope: [0, 0.55], band: [0, 1], height: [0.7, 1.3], inForest: 0.5, shore: 0, riverbank: 0.3, bankDensity: 75 },
+  // Dry grass in the washes. A desert river is the only wet thing for miles and
+  // everything that can grow does it there, which is the one place a mesa map
+  // has any business being green.
+  mesa: { kind: 'tuft', density: 10, slope: [0, 0.45], band: [0, 1], height: [0.8, 1.5], inForest: 1, shore: 0, riverbank: 0.28, bankDensity: 75 },
+  coastal: { kind: 'tuft', density: 8, slope: [0, 0.45], band: [0, 1], height: [0.9, 1.6], inForest: 0.4, shore: 55, riverbank: 0.32, bankDensity: 45 },
+  valley: { kind: 'reed', density: 7, slope: [0, 0.3], band: [0, 1], height: [1.6, 2.8], inForest: 1, shore: 14, riverbank: 0.25, bankDensity: 60 },
   volcanic: null,
-  field: { kind: 'reed', density: 7, slope: [0, 0.3], band: [0, 1], height: [1.6, 2.8], inForest: 1, shore: 14 },
-  archipelago: { kind: 'tuft', density: 8, slope: [0, 0.45], band: [0, 1], height: [0.9, 1.6], inForest: 0.4, shore: 55 },
+  field: { kind: 'reed', density: 7, slope: [0, 0.3], band: [0, 1], height: [1.6, 2.8], inForest: 1, shore: 14, riverbank: 0.25, bankDensity: 60 },
+  archipelago: { kind: 'tuft', density: 8, slope: [0, 0.45], band: [0, 1], height: [0.9, 1.6], inForest: 0.4, shore: 55, riverbank: 0.32, bankDensity: 40 },
 }
 
 /**

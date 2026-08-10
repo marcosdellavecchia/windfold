@@ -932,6 +932,28 @@ export function meshHeight(hf: Heightfield, x: number, z: number): number {
     : h11 + (h10 - h11) * (1 - v) + (h01 - h11) * (1 - u)
 }
 
+/**
+ * Bilinear drainage sample — how strongly water gathers at a point, 0 to 1.
+ *
+ * The field is per-vertex and anything scattering over the ground lands between
+ * vertices, so it needs interpolating like the heights do. Bilinear rather than
+ * the mesh's split triangles: nothing here is trying to sit flush against a
+ * surface, it is asking a question about the neighbourhood.
+ */
+export function sampleWet(hf: Heightfield, x: number, z: number): number {
+  const n = hf.seg + 1
+  const fx = clamp((x + HALF_WORLD) / hf.cell, 0, hf.seg - 1e-4)
+  const fz = clamp((z + HALF_WORLD) / hf.cell, 0, hf.seg - 1e-4)
+  const ix = Math.floor(fx)
+  const iz = Math.floor(fz)
+  const tx = fx - ix
+  const tz = fz - iz
+  const i = iz * n + ix
+  const a = hf.wet[i] + (hf.wet[i + 1] - hf.wet[i]) * tx
+  const b = hf.wet[i + n] + (hf.wet[i + n + 1] - hf.wet[i + n]) * tx
+  return a + (b - a) * tz
+}
+
 /** Bilinear height sample. Clamps outside the map rather than throwing. */
 export function sampleHeight(hf: Heightfield, x: number, z: number): number {
   const n = hf.seg + 1

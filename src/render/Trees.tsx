@@ -31,7 +31,7 @@ import {
 } from '../sim/flora'
 import type { Noise2D } from '../sim/noise'
 import { mulberry32 } from '../sim/rng'
-import { sampleGradient, sampleHeight, smoothstep, clamp01 } from '../sim/terrain'
+import { sampleGradient, sampleHeight, sampleWet, smoothstep, clamp01 } from '../sim/terrain'
 import type { Palette, Rgb } from '../sim/palette'
 
 /** Scatter cell size, metres. */
@@ -54,6 +54,8 @@ const MAX_PER_SPECIES = 3000
 const MAX_DETAIL = 1400
 /** The water-edge species live on narrow ribbons; they never need many. */
 const MAX_DETAIL2 = 900
+/** Drainage above which the ground is the watercourse rather than its bank. */
+const BANK_MAX = 0.82
 
 /**
  * Trees, streamed around the camera.
@@ -355,7 +357,74 @@ function scatter(world: World, built: Built, cx: number, cz: number) {
 
           const h = sampleHeight(hf, x, z)
           if (h < waterY) continue
-          if (detail2.shore > 0 && (!hf.hasWater || h > hf.waterLevel + detail2.shore)) continue
+          // Near the lake, or along a watercourse — either will do, and a species
+          // may want only one of them. The alpine and mesa understories are the
+          // river case on its own: their `shore` is zero, so the drainage is the
+          // only thing that admits them at all.
+          if (detail2.shore > 0 || detail2.riverbank > 0) {
+            const onShore =
+              detail2.shore > 0 && hf.hasWater && h <= hf.waterLevel + detail2.shore
+            let onBank = false
+            if (!onShore && detail2.riverbank > 0) {
+              const wet = sampleWet(hf, x, z)
+              // A band, not a floor. Past BANK_MAX is the channel itself, where
+              // the stream mesh is drawing water — reeds standing mid-river would
+              // be growing out of it.
+              onBank = wet > detail2.riverbank && wet < BANK_MAX
+            }
+            if (!onShore && !onBank) continue
+          }
+
+          sampleGradient(hf, x, z, GRAD)
+          const slope = Math.hypot(GRAD.x, GRAD.z)
+          if (slope < detail2.slope[0] || slope > detail2.slope[1]) continue
+
+          if (detail2.inForest < 1) {
+            const cover = forestAmount(built.mask, built.rock, spec, hf, h, slope, x, z)
+            if (cover > 0 && forestRoll > detail2.inForest) continue
+          }
+
+          const edge = 1 - smoothstep(RADIUS * 0.8, RADIUS, Math.sqrt(d2))
+          if (edge <= 0.02) continue
+
+          const height = (detail2.height[0] + sizeRoll * (detail2.height[1] - detail2.height[0])) * edge
+          const width = height * (0.7 + tintRoll * 0.3)
+
+          POS.set(x, h, z)
+          QUAT.setFromAxisAngle(UP, rot)
+          SCALE.set(width, height, width)
+          MATRIX.compose(POS, QUAT, SCALE)
+          built.detail2Mesh.setMatrixAt(nDetail2, MATRIX)
+
+          const base = built.detail2Palette[Math.floor(tintRoll * built.detail2Palette.length) % built.detail2Palette.length]
+          const v = 0.84 + sizeRoll * 0.3
+          COLOR.setRGB(clamp01(base[0] * v), clamp01(base[1] * v), clamp01(base[2] * v))
+          built.detail2Mesh.setColorAt(nDetail2, COLOR)
+          nDetail2++
+        }
+      }
+
+      // The banks, on their own budget. Same mesh, same species, same cell
+      // stream — only the reason for being there differs, and it is the one the
+      // ordinary scatter is too thinly spread to find.
+      if (detail2 && built.detail2Mesh && detail2.bankDensity > 0) {
+        for (let k = 0; k < detail2.bankDensity; k++) {
+          const x = (cix + rng()) * CELL
+          const z = (ciz + rng()) * CELL
+          const rot = rng() * Math.PI * 2
+          const sizeRoll = rng()
+          const tintRoll = rng()
+          const forestRoll = rng()
+
+          const dx = x - cx
+          const dz = z - cz
+          const d2 = dx * dx + dz * dz
+          if (d2 > r2 || nDetail2 >= MAX_DETAIL2) continue
+
+          const h = sampleHeight(hf, x, z)
+          if (h < waterY) continue
+          const wet = sampleWet(hf, x, z)
+          if (wet <= detail2.riverbank || wet >= BANK_MAX) continue
 
           sampleGradient(hf, x, z, GRAD)
           const slope = Math.hypot(GRAD.x, GRAD.z)
