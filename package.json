@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
-    "sim:check": "esbuild src/dev/glideTest.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/glideTest.mjs --log-level=warning && node node_modules/.cache/glideTest.mjs"
+    "sim:check": "esbuild src/dev/glideTest.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/glideTest.mjs --log-level=warning && node node_modules/.cache/glideTest.mjs",
+    "shader:check": "esbuild src/dev/shaderCheck.mjs --bundle --platform=node --format=esm --outfile=node_modules/.cache/shaderCheck.mjs --log-level=warning && node node_modules/.cache/shaderCheck.mjs"
   },
   "dependencies": {
     "@react-three/fiber": "^9.0.0",
