@@ -72,14 +72,14 @@ export const FLORA: Record<BiomeId, FloraSpec> = {
 
 /* -------------------------------------------------------------- understory ---- */
 
-export type DetailKind = 'boulder' | 'cactus' | 'palm' | 'shrub' | 'spire' | 'reed' | 'tuft'
+export type DetailKind = 'boulder' | 'cactus' | 'palm' | 'shrub' | 'spire' | 'reed' | 'tuft' | 'hoodoo' | 'ocotillo'
 
 /**
  * The second thing that grows — or in half the biomes, does not grow at all.
  *
  * Trees only ever stand where the forest mask is high, which by design leaves every
  * bare slope, scree field, playa and beach in the game completely empty. Those are
- * most of the ground on four of the six biomes. The understory fills them with one
+ * most of the ground on four of the six biomes. The understory fills them with
  * more instanced species per biome, placed by the rules trees are placed *against*:
  * boulders want the steep ground trees are excluded from, palms want the shoreline
  * the forest is deliberately held back from.
@@ -127,19 +127,60 @@ export interface DetailSpec {
   bankDensity: number
 }
 
-export const DETAIL: Record<BiomeId, DetailSpec> = {
+/**
+ * A list per biome rather than one species, because one species per biome was the
+ * main reason four of the six read as sparse: the mid-band of a mesa is hundreds
+ * of metres of one colour with a cactus in it. Each entry is one more instanced
+ * draw call and one more pass over the scatter cells — a few of either is nothing,
+ * and it roughly triples what there is to look at on the bare ground.
+ */
+export const DETAIL: Record<BiomeId, DetailSpec[]> = {
   // Talus and glacial erratics, on exactly the slopes the spruce cannot hold.
-  alpine: { kind: 'boulder', density: 8, slope: [0.35, 1.7], band: [0.05, 0.95], height: [4, 11], inForest: 0.35, shore: 0, riverbank: 0, bankDensity: 0 },
-  // Saguaro in the washes. The only vertical thing on a mesa day.
-  mesa: { kind: 'cactus', density: 6, slope: [0, 0.34], band: [0.08, 0.62], height: [4, 9], inForest: 1, shore: 0, riverbank: 0, bankDensity: 0 },
-  // Broken rock along the cliff tops and headlands.
-  coastal: { kind: 'boulder', density: 6, slope: [0.3, 1.5], band: [0, 0.9], height: [3, 8], inForest: 0.3, shore: 0, riverbank: 0, bankDensity: 0 },
-  // Bramble and scrub filling the clearings between the broadleaf stands.
-  valley: { kind: 'shrub', density: 11, slope: [0, 0.7], band: [0, 0.78], height: [2, 4.5], inForest: 1, shore: 0, riverbank: 0, bankDensity: 0 },
-  // Basalt columns. Cooling lava cracks into hexagons, so these are hexagonal.
-  volcanic: { kind: 'spire', density: 5, slope: [0.1, 1.2], band: [0.05, 0.88], height: [8, 22], inForest: 1, shore: 0, riverbank: 0, bankDensity: 0 },
-  // Palms right down the beach, in the band the forest mask is told to avoid.
-  archipelago: { kind: 'palm', density: 9, slope: [0, 0.36], band: [0, 0.4], height: [10, 18], inForest: 1, shore: 95, riverbank: 0, bankDensity: 0 },
+  // One species only — alpine's richness budget is spent on snow, scree and
+  // strata already, and it is the biome the others are being raised toward.
+  alpine: [
+    { kind: 'boulder', density: 8, slope: [0.35, 1.7], band: [0.05, 0.95], height: [4, 11], inForest: 0.35, shore: 0, riverbank: 0, bankDensity: 0 },
+  ],
+  mesa: [
+    // Saguaro in the washes.
+    { kind: 'cactus', density: 6, slope: [0, 0.34], band: [0.08, 0.62], height: [4, 9], inForest: 1, shore: 0, riverbank: 0, bankDensity: 0 },
+    // Hoodoos on the open benches of the mid-band — the vertical element the
+    // biome was missing, and the one that stands against the sky the way the
+    // arch does. Density 1: at 3 they were a field of posts, and a hoodoo is a
+    // monument, not a crop — one per few cells is what lets each one be seen.
+    { kind: 'hoodoo', density: 1, slope: [0, 0.3], band: [0.3, 0.78], height: [11, 24], inForest: 1, shore: 0, riverbank: 0, bankDensity: 0 },
+    // Ocotillo between the saguaro: a second desert silhouette, thinner and
+    // taller than the scrub, so the flats stop being cactus-or-nothing.
+    { kind: 'ocotillo', density: 5, slope: [0, 0.5], band: [0.08, 0.65], height: [3.5, 6.5], inForest: 1, shore: 0, riverbank: 0, bankDensity: 0 },
+  ],
+  coastal: [
+    // Broken rock along the cliff tops and headlands.
+    { kind: 'boulder', density: 6, slope: [0.3, 1.5], band: [0, 0.9], height: [3, 8], inForest: 0.3, shore: 0, riverbank: 0, bankDensity: 0 },
+    // Gorse: wind-shorn knots of scrub on the open headland grass between the
+    // pines and the cliff edge.
+    { kind: 'shrub', density: 5, slope: [0, 0.6], band: [0.02, 0.8], height: [1.8, 3.4], inForest: 0.6, shore: 0, riverbank: 0, bankDensity: 0 },
+  ],
+  valley: [
+    // Bramble and scrub filling the clearings between the broadleaf stands.
+    { kind: 'shrub', density: 11, slope: [0, 0.7], band: [0, 0.78], height: [2, 4.5], inForest: 1, shore: 0, riverbank: 0, bankDensity: 0 },
+    // A few glacial erratics in the pasture — the odd grey thing in all that
+    // green that makes the green read as a place rather than a fill colour.
+    { kind: 'boulder', density: 2, slope: [0.25, 1.2], band: [0, 0.85], height: [2.5, 6], inForest: 0.4, shore: 0, riverbank: 0, bankDensity: 0 },
+  ],
+  volcanic: [
+    // Basalt columns. Cooling lava cracks into hexagons, so these are hexagonal.
+    { kind: 'spire', density: 5, slope: [0.1, 1.2], band: [0.05, 0.88], height: [8, 22], inForest: 1, shore: 0, riverbank: 0, bankDensity: 0 },
+    // Lava bombs: dark boulders thrown clear of the vents, lying on ground the
+    // columns are too orderly to cover.
+    { kind: 'boulder', density: 4, slope: [0, 1.0], band: [0.03, 0.85], height: [2.5, 6], inForest: 1, shore: 0, riverbank: 0, bankDensity: 0 },
+  ],
+  archipelago: [
+    // Palms right down the beach, in the band the forest mask is told to avoid.
+    { kind: 'palm', density: 9, slope: [0, 0.36], band: [0, 0.4], height: [10, 18], inForest: 1, shore: 95, riverbank: 0, bankDensity: 0 },
+    // Dark volcanic rock where the islands rise steeply out of the shallows —
+    // tropical islands are old volcanoes, and their bones show at the shore.
+    { kind: 'boulder', density: 3, slope: [0.2, 1.4], band: [0, 0.55], height: [2.5, 6], inForest: 0.5, shore: 0, riverbank: 0, bankDensity: 0 },
+  ],
 }
 
 /**

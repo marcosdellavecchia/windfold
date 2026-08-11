@@ -80,7 +80,7 @@ export function Trees({ world }: { world: World }) {
 
     const conifer = coniferGeometry(trunkTint)
     const broadleaf = broadleafGeometry(trunkTint)
-    const detailKind = DETAIL[world.biome].kind
+    const details = DETAIL[world.biome]
     const spec2 = DETAIL2[world.biome]
     const day = forestDay(world.seed)
 
@@ -113,8 +113,10 @@ export function Trees({ world }: { world: World }) {
     return {
       coniferMesh: make(conifer, MAX_PER_SPECIES),
       broadleafMesh: make(broadleaf, MAX_PER_SPECIES),
-      detailMesh: make(detailGeometry(detailKind, trunkTint), MAX_DETAIL),
-      detailPalette: detailColours(detailKind, pal),
+      // One mesh and one palette per understory species, in DETAIL's order —
+      // the scatter walks the same list, so the indices always agree.
+      detailMeshes: details.map((d) => make(detailGeometry(d.kind, trunkTint), MAX_DETAIL)),
+      detailPalettes: details.map((d) => detailColours(d.kind, pal)),
       detail2Mesh: spec2 ? make(detailGeometry(spec2.kind, trunkTint), MAX_DETAIL2) : null,
       detail2Palette: spec2 ? detailColours(spec2.kind, pal) : [],
       canopy,
@@ -147,7 +149,9 @@ export function Trees({ world }: { world: World }) {
     <>
       <primitive object={built.coniferMesh} />
       <primitive object={built.broadleafMesh} />
-      <primitive object={built.detailMesh} />
+      {built.detailMeshes.map((m, i) => (
+        <primitive key={i} object={m} />
+      ))}
       {built.detail2Mesh && <primitive object={built.detail2Mesh} />}
     </>
   )
@@ -156,8 +160,8 @@ export function Trees({ world }: { world: World }) {
 interface Built {
   coniferMesh: InstancedMesh
   broadleafMesh: InstancedMesh
-  detailMesh: InstancedMesh
-  detailPalette: Rgb[]
+  detailMeshes: InstancedMesh[]
+  detailPalettes: Rgb[][]
   detail2Mesh: InstancedMesh | null
   detail2Palette: Rgb[]
   canopy: Rgb[]
@@ -185,7 +189,7 @@ const GRAD = { x: 0, z: 0 }
 function scatter(world: World, built: Built, cx: number, cz: number) {
   const hf = world.heightfield
   const spec = FLORA[world.biome]
-  const detail = DETAIL[world.biome]
+  const details = DETAIL[world.biome]
   const detail2 = DETAIL2[world.biome]
   const day = built.day
   // The day leans the species ratio: some valley days are nearly all
@@ -204,7 +208,7 @@ function scatter(world: World, built: Built, cx: number, cz: number) {
 
   let nConifer = 0
   let nBroadleaf = 0
-  let nDetail = 0
+  const nDetails = new Array<number>(details.length).fill(0)
   let nDetail2 = 0
 
   for (let ciz = cell0z; ciz <= cell1z; ciz++) {
@@ -280,63 +284,79 @@ function scatter(world: World, built: Built, cx: number, cz: number) {
       }
 
       // The understory runs off the same cell stream, after the trees, so the
-      // whole cell is still one deterministic sequence.
-      for (let k = 0; k < detail.density; k++) {
-        const x = (cix + rng()) * CELL
-        const z = (ciz + rng()) * CELL
-        const rot = rng() * Math.PI * 2
-        const sizeRoll = rng()
-        const tintRoll = rng()
-        const forestRoll = rng()
+      // whole cell is still one deterministic sequence. Species in DETAIL's
+      // order, one after another — every species draws the same rolls whether
+      // or not its predecessors placed anything, so adding one to a biome's
+      // list never reshuffles the ones before it.
+      for (let di = 0; di < details.length; di++) {
+        const detail = details[di]
+        const mesh = built.detailMeshes[di]
+        const detailPalette = built.detailPalettes[di]
+        for (let k = 0; k < detail.density; k++) {
+          const x = (cix + rng()) * CELL
+          const z = (ciz + rng()) * CELL
+          const rot = rng() * Math.PI * 2
+          const sizeRoll = rng()
+          const tintRoll = rng()
+          const forestRoll = rng()
 
-        const dx = x - cx
-        const dz = z - cz
-        const d2 = dx * dx + dz * dz
-        if (d2 > r2 || nDetail >= MAX_DETAIL) continue
+          const dx = x - cx
+          const dz = z - cz
+          const d2 = dx * dx + dz * dz
+          if (d2 > r2 || nDetails[di] >= MAX_DETAIL) continue
 
-        const h = sampleHeight(hf, x, z)
-        if (h < waterY) continue
-        const band = (h - hf.min) / range
-        if (band < detail.band[0] || band > detail.band[1]) continue
-        if (detail.shore > 0 && (!hf.hasWater || h > hf.waterLevel + detail.shore)) continue
+          const h = sampleHeight(hf, x, z)
+          if (h < waterY) continue
+          const band = (h - hf.min) / range
+          if (band < detail.band[0] || band > detail.band[1]) continue
+          if (detail.shore > 0 && (!hf.hasWater || h > hf.waterLevel + detail.shore)) continue
 
-        sampleGradient(hf, x, z, GRAD)
-        const slope = Math.hypot(GRAD.x, GRAD.z)
-        // Boulders and basalt want steep ground, because talus is what a slope
-        // sheds. But a scree sector is flat ground buried in the stuff, and the
-        // lower bound is what used to make that impossible — so where the rock
-        // field is high it goes away, and the stone itself becomes the reason
-        // they are standing there. The upper bound stays: nothing perches on a
-        // cliff face, however stony the cliff is.
-        const stony = STONY.has(detail.kind) ? rockAmount(built.rock, spec, hf, h, x, z) : 0
-        if (slope < detail.slope[0] * (1 - stony) || slope > detail.slope[1]) continue
+          sampleGradient(hf, x, z, GRAD)
+          const slope = Math.hypot(GRAD.x, GRAD.z)
+          // Boulders and basalt want steep ground, because talus is what a slope
+          // sheds. But a scree sector is flat ground buried in the stuff, and the
+          // lower bound is what used to make that impossible — so where the rock
+          // field is high it goes away, and the stone itself becomes the reason
+          // they are standing there. The upper bound stays: nothing perches on a
+          // cliff face, however stony the cliff is.
+          const stony = STONY.has(detail.kind) ? rockAmount(built.rock, spec, hf, h, x, z) : 0
+          if (slope < detail.slope[0] * (1 - stony) || slope > detail.slope[1]) continue
 
-        // Thinned rather than excluded under canopy: a boulder in a wood is fine,
-        // a boulder field in a wood is not.
-        if (detail.inForest < 1) {
-          const cover = forestAmount(built.mask, built.rock, spec, hf, h, slope, x, z)
-          if (cover > 0 && forestRoll > detail.inForest) continue
+          // Thinned rather than excluded under canopy: a boulder in a wood is fine,
+          // a boulder field in a wood is not.
+          if (detail.inForest < 1) {
+            const cover = forestAmount(built.mask, built.rock, spec, hf, h, slope, x, z)
+            if (cover > 0 && forestRoll > detail.inForest) continue
+          }
+
+          const edge = 1 - smoothstep(RADIUS * 0.8, RADIUS, Math.sqrt(d2))
+          if (edge <= 0.02) continue
+
+          const height = (detail.height[0] + sizeRoll * (detail.height[1] - detail.height[0])) * edge
+          // Boulders sit in the ground rather than on it, and they are not
+          // upright. Hoodoos are far slimmer than their height; everything else
+          // splays about as wide as it stands.
+          const rock = detail.kind === 'boulder'
+          const width =
+            height *
+            (rock
+              ? 1.1 + tintRoll * 0.5
+              : detail.kind === 'hoodoo'
+                ? 0.42 + tintRoll * 0.14
+                : 0.7 + tintRoll * 0.3)
+
+          POS.set(x, rock ? h - height * 0.28 : h, z)
+          QUAT.setFromAxisAngle(UP, rot)
+          SCALE.set(width, height, width * (rock ? 0.85 + sizeRoll * 0.4 : 1))
+          MATRIX.compose(POS, QUAT, SCALE)
+          mesh.setMatrixAt(nDetails[di], MATRIX)
+
+          const base = detailPalette[Math.floor(tintRoll * detailPalette.length) % detailPalette.length]
+          const v = 0.84 + sizeRoll * 0.3
+          COLOR.setRGB(clamp01(base[0] * v), clamp01(base[1] * v), clamp01(base[2] * v))
+          mesh.setColorAt(nDetails[di], COLOR)
+          nDetails[di]++
         }
-
-        const edge = 1 - smoothstep(RADIUS * 0.8, RADIUS, Math.sqrt(d2))
-        if (edge <= 0.02) continue
-
-        const height = (detail.height[0] + sizeRoll * (detail.height[1] - detail.height[0])) * edge
-        // Boulders sit in the ground rather than on it, and they are not upright.
-        const rock = detail.kind === 'boulder'
-        const width = height * (rock ? 1.1 + tintRoll * 0.5 : 0.7 + tintRoll * 0.3)
-
-        POS.set(x, rock ? h - height * 0.28 : h, z)
-        QUAT.setFromAxisAngle(UP, rot)
-        SCALE.set(width, height, width * (rock ? 0.85 + sizeRoll * 0.4 : 1))
-        MATRIX.compose(POS, QUAT, SCALE)
-        built.detailMesh.setMatrixAt(nDetail, MATRIX)
-
-        const base = built.detailPalette[Math.floor(tintRoll * built.detailPalette.length) % built.detailPalette.length]
-        const v = 0.84 + sizeRoll * 0.3
-        COLOR.setRGB(clamp01(base[0] * v), clamp01(base[1] * v), clamp01(base[2] * v))
-        built.detailMesh.setColorAt(nDetail, COLOR)
-        nDetail++
       }
 
       // The water-edge species, off the same cell stream again, so the whole
@@ -459,13 +479,16 @@ function scatter(world: World, built: Built, cx: number, cz: number) {
 
   built.coniferMesh.count = nConifer
   built.broadleafMesh.count = nBroadleaf
-  built.detailMesh.count = nDetail
   built.coniferMesh.instanceMatrix.needsUpdate = true
   built.broadleafMesh.instanceMatrix.needsUpdate = true
-  built.detailMesh.instanceMatrix.needsUpdate = true
   if (built.coniferMesh.instanceColor) built.coniferMesh.instanceColor.needsUpdate = true
   if (built.broadleafMesh.instanceColor) built.broadleafMesh.instanceColor.needsUpdate = true
-  if (built.detailMesh.instanceColor) built.detailMesh.instanceColor.needsUpdate = true
+  for (let di = 0; di < built.detailMeshes.length; di++) {
+    const mesh = built.detailMeshes[di]
+    mesh.count = nDetails[di]
+    mesh.instanceMatrix.needsUpdate = true
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
+  }
   if (built.detail2Mesh) {
     built.detail2Mesh.count = nDetail2
     built.detail2Mesh.instanceMatrix.needsUpdate = true
@@ -600,6 +623,35 @@ function detailGeometry(kind: DetailKind, trunkTint: number): BufferGeometry {
       }
       return merge(parts)
     }
+    case 'hoodoo': {
+      // A totem of soft rock under a harder caprock. The radii pinch and swell
+      // up the column and each layer sits a little off the axis — a straight
+      // stack reads as a machined part. The dark overhanging cap is the one
+      // legible feature: the caprock is why a hoodoo exists, so it is the thing
+      // the silhouette has to say.
+      return merge([
+        { geo: translated(new CylinderGeometry(0.24, 0.34, 0.3, 7), 0, 0.15, 0), tint: 0.92 },
+        { geo: translated(new CylinderGeometry(0.19, 0.25, 0.28, 7), 0.03, 0.43, -0.02), tint: 1.0 },
+        { geo: translated(new CylinderGeometry(0.22, 0.18, 0.26, 7), -0.02, 0.69, 0.03), tint: 0.85 },
+        { geo: translated(new CylinderGeometry(0.2, 0.28, 0.18, 7), 0.02, 0.91, 0), tint: 0.62 },
+      ])
+    }
+    case 'ocotillo': {
+      // A fan of bare canes leaning out of one root. Nothing else in the game
+      // is thin lines against the sky, which is exactly what an ocotillo is —
+      // the shape earns its place by being unlike every other silhouette here.
+      const parts: Array<{ geo: BufferGeometry; tint: number }> = []
+      for (let i = 0; i < 7; i++) {
+        const a = (i / 7) * Math.PI * 2 + 0.9
+        const lean = 0.28 + (i % 3) * 0.11
+        const cane = translated(new CylinderGeometry(0.012, 0.03, 1.0, 4), 0, 0.5, 0)
+        parts.push({
+          geo: rotatedY(rotatedZ(cane, lean), a),
+          tint: i % 2 === 0 ? 1.0 : 0.82,
+        })
+      }
+      return merge(parts)
+    }
   }
 }
 
@@ -625,6 +677,14 @@ function detailColours(kind: DetailKind, pal: Palette): Rgb[] {
     case 'tuft':
       // Dry standing grass on sand: pale, closer to the beach than the field.
       return [mix(pal.sand, pal.mid, 0.45), mix(pal.sand, pal.high, 0.4), scale(pal.sand, 0.88)]
+    case 'hoodoo':
+      // Mostly the rock band, with mineral as the seasoning. The first cut
+      // leaned mineral-first and on a hazy day the columns came out near-white —
+      // scattered bones on the ground instead of stone standing out of it.
+      return [scale(pal.rock, 1.1), mix(pal.rock, pal.mineral, 0.35), scale(pal.rock, 0.9), mix(pal.rock, pal.mineral, 0.55)]
+    case 'ocotillo':
+      // Dry canes: more stick than leaf, with the odd one flushed toward bloom.
+      return [mix(pal.mid, pal.rock, 0.4), scale(pal.mid, 0.72), mix(pal.mid, pal.bloom, 0.2)]
   }
 }
 

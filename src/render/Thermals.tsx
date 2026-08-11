@@ -24,6 +24,12 @@ export function Thermals({ world }: { world: World }) {
   const ref = useRef<Points>(null)
   const viewportHeight = useThree((s) => s.size.height * s.viewport.dpr)
 
+  // On a mesa day the columns are dust devils: the same thermals, but the dust
+  // they lift is the ground itself, and a desert vortex is a tall, tight, fast
+  // spout rather than a loose shimmer. Same mechanic, so nothing about route
+  // planning changes — the day just wears its own weather.
+  const devil = world.biome === 'mesa'
+
   const { geometry, material, state } = useMemo(() => {
     const rng = mulberry32(world.seed ^ 0x5eed)
     const thermals = world.air.thermals
@@ -41,19 +47,24 @@ export function Thermals({ world }: { world: World }) {
         const i = t * PER_COLUMN + k
         owner[i] = t
         angle[i] = rng() * Math.PI * 2
-        radius[i] = Math.sqrt(rng()) * 0.68
+        radius[i] = Math.sqrt(rng()) * (devil ? 0.34 : 0.68)
         // Weighted toward the base: that is the part of the column an aircraft
         // actually flies into, and a column that is dense low down reads as a
         // column instead of as scattered specks.
         height[i] = Math.pow(rng(), 1.5)
-        spin[i] = 0.25 + rng() * 0.5
+        spin[i] = (0.25 + rng() * 0.5) * (devil ? 2.6 : 1)
       }
     }
 
     const geo = new BufferGeometry()
     geo.setAttribute('position', new BufferAttribute(positions, 3).setUsage(35048))
 
-    const tint = new Color(rgbToHex(world.palette.sun)).lerp(new Color(0xffffff), 0.45)
+    // A dust devil is made of the ground it stands on, so it takes the day's
+    // sand rather than backlit near-white — the one column colour that could
+    // never be mistaken for the haze.
+    const tint = devil
+      ? new Color(rgbToHex(world.palette.sand)).lerp(new Color(rgbToHex(world.palette.sun)), 0.35)
+      : new Color(rgbToHex(world.palette.sun)).lerp(new Color(0xffffff), 0.45)
     const mat = new ShaderMaterial({
       transparent: true,
       blending: AdditiveBlending,
@@ -61,7 +72,7 @@ export function Thermals({ world }: { world: World }) {
       uniforms: {
         uColor: { value: tint },
         uSize: { value: 5 },
-        uOpacity: { value: 0.36 },
+        uOpacity: { value: devil ? 0.46 : 0.36 },
         uViewportH: { value: 1000 },
         uFadeNear: { value: 2100 },
         uFadeFar: { value: 3400 },
@@ -115,15 +126,18 @@ export function Thermals({ world }: { world: World }) {
       // The lift reaches all the way to t.top, but the dust only marks the bottom
       // of it. A column drawn to full height wraps the sky when you fly near its
       // base and reads as a starfield; a low plume reads as a place on the ground
-      // worth flying to, which is what the player actually needs from it.
-      const span = Math.min(t.top - t.base, VISIBLE_COLUMN)
+      // worth flying to, which is what the player actually needs from it. A dust
+      // devil runs taller — height is its silhouette — and it can afford to,
+      // because its tight radius never wraps the view the way the wide plumes did.
+      const span = Math.min(t.top - t.base, devil ? 430 : VISIBLE_COLUMN)
 
       height[i] += (t.strength / span) * 0.35 * d
       if (height[i] > 1) height[i] -= 1
       angle[i] += spin[i] * d
 
-      // Columns lean downwind and widen as they rise.
-      const widen = 0.35 + height[i] * 0.85
+      // Columns lean downwind and widen as they rise. A devil barely widens:
+      // near-parallel sides are most of what separates a vortex from a plume.
+      const widen = devil ? 0.5 + height[i] * 0.25 : 0.35 + height[i] * 0.85
       const r = radius[i] * t.radius * widen
       const drift = height[i] * span * 0.12
 

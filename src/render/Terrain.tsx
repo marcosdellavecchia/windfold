@@ -34,6 +34,41 @@ const PATCH = { octaves: 3, frequency: 1 / 1500, lacunarity: 2.1, gain: 0.5 }
 const VEIN = { octaves: 2, frequency: 1 / 620, lacunarity: 2.3, gain: 0.5 }
 
 /**
+ * The signature paint each biome runs that the others do not.
+ *
+ * The shared fields — forest, rock, meadow, snow, wet — are what every landscape
+ * has in common, and a biome painted with only what landscapes have in common
+ * reads as generic. These dials are what a mesa has that a valley does not:
+ * banded cliffs, varnish streaks, an alkali pan. All of it is build-time vertex
+ * colour, so a dial nobody sets costs nothing.
+ */
+interface GroundPaint {
+  /** Slope where the mineral strata start to bite. The default 0.42 is a cliff. */
+  strataEdge: number
+  strataAmount: number
+  /** Desert varnish: dark streaks down the faces. 0 = none. */
+  varnish: number
+  /** Alkali pan on the lowest flats — mesa's basin floor. */
+  playa: boolean
+  /** Pale coral shelf in the shallows. 0 = none. */
+  reef: number
+  /** Field patchwork with hedgerow borders on flat open ground. */
+  fields: boolean
+}
+
+const PAINT: Record<BiomeId, GroundPaint> = {
+  alpine: { strataEdge: 0.42, strataAmount: 0.4, varnish: 0, playa: false, reef: 0, fields: false },
+  // The mesa's whole character is in its rock, so the strata gate drops far
+  // below cliff-slope: terrace risers at 32 m cells rarely reach 0.42, which is
+  // why the one biome that is *about* banding was showing almost none of it.
+  mesa: { strataEdge: 0.18, strataAmount: 0.62, varnish: 0.5, playa: true, reef: 0, fields: false },
+  coastal: { strataEdge: 0.42, strataAmount: 0.4, varnish: 0, playa: false, reef: 0.45, fields: false },
+  valley: { strataEdge: 0.42, strataAmount: 0.4, varnish: 0, playa: false, reef: 0, fields: true },
+  volcanic: { strataEdge: 0.42, strataAmount: 0.4, varnish: 0, playa: false, reef: 0, fields: false },
+  archipelago: { strataEdge: 0.42, strataAmount: 0.4, varnish: 0, playa: false, reef: 1, fields: false },
+}
+
+/**
  * One vertex-coloured heightfield mesh built from the same Float32Array the
  * physics samples, so what you see is exactly what you can hit. No textures —
  * colour comes from altitude and slope, which is what keeps the download at zero
@@ -237,6 +272,17 @@ function buildGeometry(world: World): BufferGeometry {
   const patchNoise = new Noise2D(mulberry32(world.seed ^ 0x9a7c))
   const veinNoise = new Noise2D(mulberry32(world.seed ^ 0x51a7))
   const snowline = SNOWLINE[world.biome]
+  const paint = PAINT[world.biome]
+  // The coral shelf: the water's own colour pulled well toward the sand and
+  // lightened — what a reef flat is, seen through a metre of clear sea.
+  const reefCol: Rgb = [
+    (pal.water[0] * 0.45 + pal.sand[0] * 0.55) * 1.18,
+    (pal.water[1] * 0.45 + pal.sand[1] * 0.55) * 1.18,
+    (pal.water[2] * 0.45 + pal.sand[2] * 0.55) * 1.18,
+  ]
+  /** Field parcel size, metres. Big enough that a parcel holds many vertices. */
+  const FIELD = 260
+  const FIELD_HALF = FIELD / 2
   // Snow is never white. It takes the sky, which is what keeps a summit inside the
   // day's palette instead of punching a hole in it.
   const snowColour: Rgb = [
@@ -288,7 +334,7 @@ function buildGeometry(world: World): BufferGeometry {
       // the bands stay level while the rock face does not.
       const vein = fbm(veinNoise, x, z, VEIN)
       const strata = Math.sin(h * 0.045 + vein * 2.4) * 0.5 + 0.5
-      lerp3(c, c, pal.mineral, smoothstep(0.42, 1.1, slope) * strata * 0.4)
+      lerp3(c, c, pal.mineral, smoothstep(paint.strataEdge, 1.1, slope) * strata * paint.strataAmount)
 
       // Rock first, because the forest reads it: bare stone holds no wood, and
       // this pass is the one place that would otherwise evaluate the field twice
@@ -309,6 +355,36 @@ function buildGeometry(world: World): BufferGeometry {
         (1 - smoothstep(0.5, 0.82, t))
       if (meadow > 0) lerp3(c, c, pal.bloom, meadow * 0.3)
 
+      // Field patchwork: flat open lowland divided into parcels, each leaning
+      // its own way — toward hay-gold or a deeper green — with a darker seam
+      // along the parcel borders. The one biome that is *tended* country rather
+      // than wilderness gets to look tended from the air, which is most of what
+      // "cozy" means at altitude. The grid is warped by the same patch and vein
+      // fields everything else uses, so the parcels are crooked the way old
+      // enclosure is, not a checkerboard.
+      if (paint.fields) {
+        // Enclosure climbs the lower hillsides — a slope gate tuned for true
+        // flats never fired on billow terrain, whose valley floors still roll.
+        const strength =
+          (1 - smoothstep(0.14, 0.32, slope)) * (1 - smoothstep(0.38, 0.58, t)) * (1 - smoothstep(0.1, 0.3, forest))
+        if (strength > 0.02) {
+          const wx = x + patch * 110
+          const wz = z + vein * 110
+          const gx = Math.floor(wx / FIELD)
+          const gz = Math.floor(wz / FIELD)
+          const tone = hash2(gx, gz)
+          if (tone > 0.55) lerp3(c, c, pal.bloom, strength * (tone - 0.55) * 0.8)
+          else lerp3(c, c, canopy, strength * (0.55 - tone) * 0.5)
+          // The hedgerow seam. At 32 m vertices this is one to two vertices
+          // wide, which drawn in canopy-dark reads as exactly what it is: a
+          // line of trees between two fields.
+          const ex = FIELD_HALF - Math.abs(wx - gx * FIELD - FIELD_HALF)
+          const ez = FIELD_HALF - Math.abs(wz - gz * FIELD - FIELD_HALF)
+          const border = 1 - smoothstep(16, 44, Math.min(ex, ez))
+          if (border > 0) lerp3(c, c, canopy, border * strength * 0.65)
+        }
+      }
+
       // Rocky ground, and the only route to stone that does not go through slope.
       // Painted after the forest and the meadow so it wins over both: this is
       // ground with nothing on it, which is the entire point of it. The strata
@@ -317,6 +393,20 @@ function buildGeometry(world: World): BufferGeometry {
       if (rocky > 0) {
         lerp3(c, c, pal.rock, rocky * 0.72)
         lerp3(c, c, pal.mineral, rocky * strata * 0.26)
+      }
+
+      // Desert varnish: the dark streaks weather leaves running down exposed
+      // faces. Painted after the rock so it darkens whatever stone is there,
+      // and slightly blue-shifted — varnish is manganese, not shadow, and
+      // darkening all three channels equally just reads as dirt on the render.
+      if (paint.varnish > 0) {
+        const streak = fbm(veinNoise, x * 2.3, z * 2.3, VEIN)
+        const v = smoothstep(0.28, 0.75, slope) * smoothstep(0.2, 0.7, streak) * paint.varnish
+        if (v > 0) {
+          c[0] *= 1 - v * 0.34
+          c[1] *= 1 - v * 0.3
+          c[2] *= 1 - v * 0.22
+        }
       }
 
       if (snowline < 1) {
@@ -378,6 +468,16 @@ function buildGeometry(world: World): BufferGeometry {
         c[2] *= shade
       }
 
+      // The alkali pan: the lowest flats crusted pale, whether or not the day's
+      // water roll left anything standing in them. The existing shore band only
+      // ever ringed the waterline, so on a dry-basin day the playa — the flattest,
+      // most distinctive ground on the map — was painted like any hillside.
+      if (paint.playa) {
+        const pan =
+          (1 - smoothstep(0.03, 0.1, t)) * (1 - smoothstep(0.08, 0.2, slope)) * smoothstep(-0.4, 0.3, patch)
+        if (pan > 0) lerp3(c, c, pal.sand, pan * 0.55)
+      }
+
       if (hf.hasWater) {
         // The shore band above the waterline — sand, shingle, silt or ash by
         // palette. Width wanders with the patch field so the coast is a coast
@@ -395,7 +495,20 @@ function buildGeometry(world: World): BufferGeometry {
         }
         // Shallows read as a beach, deeps darken toward the water colour.
         const below = (hf.waterLevel - h) / Math.max(range * 0.12, 1)
-        if (below > 0) lerp3(c, c, pal.water, clamp01(below) * 0.85)
+        if (below > 0) {
+          lerp3(c, c, pal.water, clamp01(below) * 0.85)
+          // The reef: a pale shelf at snorkelling depth, standing out of the
+          // darker blue on the seaward side. Painted on the seabed rather than
+          // the surface, which is how a real reef arrives in an aerial view —
+          // through the water, not on it. Broken up by the patch field so it is
+          // a scatter of flats and passes rather than a contour ring around
+          // every island, which is the trap every depth-keyed band walks into.
+          if (paint.reef > 0) {
+            const ring = smoothstep(0.1, 0.28, below) * (1 - smoothstep(0.42, 0.72, below))
+            const broken = smoothstep(-0.25, 0.45, patch)
+            if (ring > 0) lerp3(c, c, reefCol, ring * broken * 0.55 * paint.reef)
+          }
+        }
       }
 
       // A little deterministic grain so large flat faces are not dead colour.

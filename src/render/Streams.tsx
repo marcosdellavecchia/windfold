@@ -443,8 +443,10 @@ export function Streams({ world }: { world: World }) {
           // The surface, dragged downstream. Sampling at a position that slides
           // along the flow direction makes the water move *with the valley*
           // rather than in one direction across the whole map, and it costs an
-          // attribute rather than a second texture.
-          vec2 drift = vWorld.xz - vFlow * (uTime * 4.5);
+          // attribute rather than a second texture. Steep water moves fast —
+          // the extra speed on a cascade is half of what makes it read as
+          // falling rather than as painted white.
+          vec2 drift = vWorld.xz - vFlow * (uTime * (4.5 + vFoam * 8.0));
           float r0 = ripple(drift);
           float e = 3.2;
           float rx = ripple(drift + vec2(e, 0.0)) - r0;
@@ -516,7 +518,22 @@ export function Streams({ world }: { world: World }) {
           // that actually matters.
           float white = vFoam * (0.35 + 0.65 * smoothstep(0.35, 0.9, r0));
           white += (1.0 - smoothstep(0.08, 0.5, mid)) * 0.12;
-          col = mix(col, vec3(1.0), clamp(white, 0.0, 0.8) * 0.55);
+
+          // Cascades. The ripple field is isotropic, so on its own the steepest
+          // drop in the network is a pale patch of the same chop as everywhere
+          // else. Falling water is streaked *along* the flow: noise squeezed
+          // hard across the channel, stretched down it, and pulled downstream
+          // faster than the surface — those streaks are what the eye knows a
+          // waterfall by, at any distance the river is visible at all. Only the
+          // steepest stretches earn it; an ordinary riffle keeps the quiet tint.
+          float cascade = smoothstep(0.45, 1.0, vFoam);
+          if (cascade > 0.0) {
+            float along = dot(vWorld.xz, vFlow);
+            float across = dot(vWorld.xz, vec2(-vFlow.y, vFlow.x));
+            float rush = csNoise(vec2(across * 0.3, along * 0.05 - uTime * 4.0));
+            white += cascade * (0.3 + 0.7 * smoothstep(0.3, 0.85, rush));
+          }
+          col = mix(col, vec3(1.0), clamp(white, 0.0, 0.9) * (0.55 + cascade * 0.25));
 
           // A dark line right at the waterline.
           //
