@@ -3,6 +3,7 @@ import { useFrame } from '@react-three/fiber'
 import { BackSide, Color, ShaderMaterial, Vector2, Vector3 } from 'three'
 import type { World } from '../sim/world'
 import { rgbToHex } from '../sim/palette'
+import { AIR_FOG_GLSL, AIR_FOG_UNIFORMS } from './atmosphere'
 
 /**
  * Gradient dome with a soft sun bloom. A shader rather than a texture keeps the
@@ -27,8 +28,8 @@ export function Sky({ world }: { world: World }) {
       uniforms: {
         uTop: { value: new Color(rgbToHex(pal.skyTop)) },
         uHorizon: { value: new Color(rgbToHex(pal.skyHorizon)) },
-        uFog: { value: new Color(rgbToHex(pal.fog)) },
         uSun: { value: new Color(rgbToHex(pal.sun)) },
+        ...AIR_FOG_UNIFORMS,
         uGlow: { value: new Color(rgbToHex(pal.glow)) },
         uCirrus: { value: new Color(rgbToHex(pal.cirrus)) },
         uSunDir: { value: world.sunDir.clone() as Vector3 },
@@ -50,7 +51,6 @@ export function Sky({ world }: { world: World }) {
       fragmentShader: /* glsl */ `
         uniform vec3 uTop;
         uniform vec3 uHorizon;
-        uniform vec3 uFog;
         uniform vec3 uSun;
         uniform vec3 uGlow;
         uniform vec3 uCirrus;
@@ -61,6 +61,8 @@ export function Sky({ world }: { world: World }) {
         uniform float uSeed;
         uniform float uTime;
         varying vec3 vDir;
+
+        ${AIR_FOG_GLSL}
 
         float hash21(vec2 p) {
           p = fract(p * vec2(123.34, 456.21));
@@ -107,10 +109,13 @@ export function Sky({ world }: { world: World }) {
           // Above the horizon: horizon colour lifting into the zenith.
           vec3 sky = mix(uHorizon, uTop, smoothstep(0.0, 0.55, up));
           // Settle into the fog colour across the horizon itself. Fogged terrain
-          // and fogged water both converge on uFog at the draw distance, so the
-          // sky has to arrive at exactly that colour or the map edge shows up as
-          // a hard line against it.
-          sky = mix(uFog, sky, smoothstep(-0.03, 0.28, up));
+          // and fogged water both converge on the shared haze at the draw
+          // distance, so the sky has to arrive at exactly that colour or the map
+          // edge shows up as a hard line against it. Directional now — the same
+          // airFogColor everything on the ground converges to, warm around the
+          // sun's azimuth and cool opposite — which is what makes the whole
+          // horizon read as one atmosphere rather than one ring of one colour.
+          sky = mix(airFogColor(d), sky, smoothstep(-0.03, 0.28, up));
 
           // --- counter-glow -------------------------------------------------
           // The pink band low in the sky opposite the sun, sitting on the blue-grey

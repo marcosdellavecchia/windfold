@@ -28,7 +28,7 @@
  * still resolves the .ts import below when bundling.
  */
 import { readFileSync, readdirSync } from 'node:fs'
-import { CLOUD_SHADOW_GLSL } from '../render/atmosphere'
+import { AIR_FOG_GLSL, AIR_FOG_UNIFORMS, CLOUD_SHADOW_GLSL } from '../render/atmosphere'
 
 const DIR = 'src/render'
 
@@ -72,9 +72,11 @@ let checked = 0
 for (const file of files) {
   const path = `${DIR}/${file}`
   const src = readFileSync(path, 'utf8')
-  // The shared chunk is interpolated at runtime; expand it so the helpers it
-  // declares count as present rather than as missing.
-  const glsl = templateLiterals(src).replace(/\bCLOUD_SHADOW_GLSL\b/g, CLOUD_SHADOW_GLSL)
+  // The shared chunks are interpolated at runtime; expand them so the helpers
+  // and uniforms they declare count as present rather than as missing.
+  const glsl = templateLiterals(src)
+    .replace(/\bCLOUD_SHADOW_GLSL\b/g, CLOUD_SHADOW_GLSL)
+    .replace(/\bAIR_FOG_GLSL\b/g, AIR_FOG_GLSL)
   if (!/\b(gl_FragColor|gl_Position|void main)\b/.test(glsl)) continue
   checked++
 
@@ -91,6 +93,11 @@ for (const file of files) {
   const supplied = new Set([
     ...[...src.matchAll(/^\s*(u[A-Z]\w*)\s*:\s*\{\s*value/gm)].map((m) => m[1]),
     ...[...src.matchAll(/shader\.uniforms\.(u[A-Z]\w*)\s*=/g)].map((m) => m[1]),
+    // The shared haze uniforms arrive as a spread or an Object.assign of the
+    // whole record; either supplies every key it holds.
+    ...(/\.\.\.AIR_FOG_UNIFORMS|Object\.assign\([^)]*AIR_FOG_UNIFORMS\)/.test(src)
+      ? Object.keys(AIR_FOG_UNIFORMS)
+      : []),
   ])
 
   const undeclared = [...used].filter((u) => !declared.has(u))

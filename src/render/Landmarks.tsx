@@ -22,7 +22,7 @@ import type { World } from '../sim/world'
 import { rgbToHex, type Rgb } from '../sim/palette'
 import { meshHeight } from '../sim/terrain'
 import { mulberry32 } from '../sim/rng'
-import { FOG_DENSITY } from './atmosphere'
+import { AIR_FOG_GLSL, AIR_FOG_UNIFORMS, patchAirFog } from './atmosphere'
 import { merge, translated, rotatedX, rotatedZ, scaled, mix, scale } from './Trees'
 
 /**
@@ -116,6 +116,7 @@ function Lighthouse({ world }: { world: World }) {
       vertexColors: true,
       color: rgbToHex(mix(pal.sand, WHITE, 0.55)),
     })
+    patchAirFog(bodyMat)
     g.add(new Mesh(body, bodyMat))
 
     // The lamp itself: unlit material, so it stays bright inside the tower's own
@@ -223,17 +224,17 @@ function VentPlume({ world }: { world: World }) {
         // Ash grey off the day's rock, pushed toward the fog so the column sits
         // in the same atmosphere as the terrain behind it.
         uColor: { value: new Color(rgbToHex(mix(scale(pal.rock, 0.75), pal.fog, 0.45))) },
-        uFog: { value: new Color(rgbToHex(pal.fog)) },
         uSize: { value: 75 },
         uOpacity: { value: 0.42 },
         uViewportH: { value: 1000 },
+        ...AIR_FOG_UNIFORMS,
       },
       vertexShader: /* glsl */ `
         uniform float uSize;
         uniform float uViewportH;
         attribute float aGrow;
         varying float vGrow;
-        varying float vFog;
+        varying vec3 vAirWorld;
 
         void main() {
           vec4 mv = modelViewMatrix * vec4(position, 1.0);
@@ -243,18 +244,16 @@ function VentPlume({ world }: { world: World }) {
           gl_PointSize = size * (uViewportH * projectionMatrix[1][1] * 0.5) / dist;
           gl_Position = projectionMatrix * mv;
           vGrow = aGrow;
-          // Hand-rolled scene fog, the Clouds trick: ShaderMaterial opts out of
-          // three's fog, and the plume must match the terrain it stands on.
-          float f = dist * ${FOG_DENSITY.toFixed(6)};
-          vFog = 1.0 - exp(-f * f);
+          vAirWorld = position;
         }
       `,
       fragmentShader: /* glsl */ `
         uniform vec3 uColor;
-        uniform vec3 uFog;
         uniform float uOpacity;
         varying float vGrow;
-        varying float vFog;
+        varying vec3 vAirWorld;
+
+        ${AIR_FOG_GLSL}
 
         void main() {
           float d = length(gl_PointCoord - vec2(0.5));
@@ -264,7 +263,12 @@ function VentPlume({ world }: { world: World }) {
           // Dense at the vent, dissolving at the top, gone into the sky.
           float body = uOpacity * (1.0 - vGrow * vGrow * 0.85);
           if (a * body <= 0.004) discard;
-          gl_FragColor = vec4(mix(uColor, uFog, vFog), a * body);
+          // The shared directional haze — the plume must match the terrain it
+          // stands on, and the terrain's fog is warm toward the sun now.
+          vec3 airRay = vAirWorld - cameraPosition;
+          float airDist = length(airRay);
+          vec3 col = mix(uColor, airFogColor(airRay / max(airDist, 1e-4)), airFogAmount(airDist, vAirWorld.y));
+          gl_FragColor = vec4(col, a * body);
         }
       `,
     })
@@ -317,6 +321,7 @@ function VentPlume({ world }: { world: World }) {
 function lambertGroup(parts: Array<{ geo: BufferGeometry; tint: number }>, color: number) {
   const geo = merge(parts)
   const mat = new MeshLambertMaterial({ vertexColors: true, color })
+  patchAirFog(mat)
   const g = new Group()
   g.add(new Mesh(geo, mat))
   return {

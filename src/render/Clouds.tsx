@@ -12,7 +12,7 @@ import {
 import type { World } from '../sim/world'
 import { rgbToHex } from '../sim/palette'
 import { mulberry32 } from '../sim/rng'
-import { FOG_DENSITY } from './atmosphere'
+import { AIR_FOG_GLSL, AIR_FOG_UNIFORMS } from './atmosphere'
 
 /** Soft puffs per cumulus. Enough to read as a lump rather than a disc. */
 const PUFFS = 13
@@ -86,9 +86,9 @@ export function Clouds({ world }: { world: World }) {
       uniforms: {
         uLit: { value: new Color(0xffffff).lerp(new Color(rgbToHex(pal.sun)), 0.28) },
         uShade: { value: new Color(rgbToHex(pal.skyHorizon)).lerp(new Color(0xffffff), 0.55) },
-        uFog: { value: new Color(rgbToHex(pal.fog)) },
         uSunDir: { value: world.sunDir.clone() as Vector3 },
         uTime: { value: 0 },
+        ...AIR_FOG_UNIFORMS,
       },
       vertexShader: /* glsl */ `
         attribute vec3 aOffset;
@@ -97,7 +97,7 @@ export function Clouds({ world }: { world: World }) {
         attribute float aPhase;
         varying vec2 vUv;
         varying float vLift;
-        varying float vFog;
+        varying vec3 vAirWorld;
         varying float vSun;
         uniform vec3 uSunDir;
         uniform float uTime;
@@ -121,11 +121,9 @@ export function Clouds({ world }: { world: World }) {
 
           vUv = uv;
           vLift = aLift;
-
-          float dist = length(centre.xyz);
-          // Matches the scene's FogExp2 so clouds vanish with everything else.
-          float f = dist * ${FOG_DENSITY.toFixed(6)};
-          vFog = 1.0 - exp(-f * f);
+          // The puff's centre stands in for every fragment of it: a cloud is a
+          // few hundred metres across against kilometres of haze.
+          vAirWorld = aOffset + wob;
 
           // How much this puff faces the sun, for a warm rim on the sunward side.
           vec3 toSun = normalize((viewMatrix * vec4(uSunDir, 0.0)).xyz);
@@ -135,11 +133,18 @@ export function Clouds({ world }: { world: World }) {
       fragmentShader: /* glsl */ `
         uniform vec3 uLit;
         uniform vec3 uShade;
-        uniform vec3 uFog;
         varying vec2 vUv;
         varying float vLift;
-        varying float vFog;
+        varying vec3 vAirWorld;
         varying float vSun;
+
+        ${AIR_FOG_GLSL}
+
+        float cdHash(vec2 p) {
+          p = fract(p * vec2(123.34, 456.21));
+          p += dot(p, p + 45.32);
+          return fract(p.x * p.y);
+        }
 
         void main() {
           // Soft round puff. The falloff is wide and gentle so overlapping puffs
@@ -149,13 +154,22 @@ export function Clouds({ world }: { world: World }) {
           a *= a;
           if (a < 0.004) discard;
 
+          // The shared directional haze, so a cloud sinks into the same warm air
+          // the ridge beneath it does — sunward cumulus dissolve into the glow.
+          vec3 airRay = vAirWorld - cameraPosition;
+          float airDist = length(airRay);
+          float fogA = airFogAmount(airDist, vAirWorld.y);
+
           // Cumulus is lit on top and along the sunward face, shaded underneath.
           float up = clamp(vLift * 0.6 + (1.0 - vUv.y) * -0.4 + vUv.y * 0.7, 0.0, 1.0);
           vec3 col = mix(uShade, uLit, up);
           col = mix(col, uLit, vSun * 0.35);
-          col = mix(col, uFog, vFog);
+          col = mix(col, airFogColor(airRay / max(airDist, 1e-4)), fogA);
+          // A puff is one wide shallow radial ramp — the exact shape banding
+          // loves. Same quarter-LSB the sky carries.
+          col += (cdHash(gl_FragCoord.xy) - 0.5) * 0.004;
 
-          gl_FragColor = vec4(col, a * 0.9 * (1.0 - vFog));
+          gl_FragColor = vec4(col, a * 0.9 * (1.0 - fogA));
         }
       `,
     })

@@ -18,6 +18,7 @@ import type { BiomeId, Palette, Rgb } from '../sim/palette'
 import { mulberry32 } from '../sim/rng'
 import { sampleGradient, sampleHeight, smoothstep } from '../sim/terrain'
 import { merge, translated, scaled, mix, scale } from './Trees'
+import { patchAirFog } from './atmosphere'
 
 /**
  * Animals on the ground. From three hundred metres up an animal is a handful of
@@ -109,7 +110,9 @@ export function Herds({ world, planeRef }: { world: World; planeRef: React.RefOb
 
   const built = useMemo(() => {
     if (!spec) return null
-    const mesh = new InstancedMesh(herdGeometry(spec.kind), new MeshLambertMaterial({ vertexColors: true }), MAX)
+    const mat = new MeshLambertMaterial({ vertexColors: true })
+    patchAirFog(mat)
+    const mesh = new InstancedMesh(herdGeometry(spec.kind), mat, MAX)
     mesh.instanceColor = new InstancedBufferAttribute(new Float32Array(MAX * 3), 3)
     mesh.frustumCulled = false
     mesh.count = 0

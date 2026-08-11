@@ -16,7 +16,7 @@ import {
 import type { World } from '../sim/world'
 import { rgbToHex } from '../sim/palette'
 import { HALF_WORLD } from '../sim/terrain'
-import { CLOUD_SHADOW_GLSL, FOG_DENSITY, cloudShadowSeed } from './atmosphere'
+import { AIR_FOG_GLSL, AIR_FOG_UNIFORMS, CLOUD_SHADOW_GLSL, cloudShadowSeed } from './atmosphere'
 
 /**
  * Lakes and sea. One plane at the day's water level; wherever the terrain is below
@@ -103,18 +103,16 @@ export function Water({ world }: { world: World }) {
         uWindAmt: { value: Math.min(world.air.windSpeed / 5.5, 1) },
         // Surf belongs to the sea. Lakes get a gentle lap of the same code.
         uFoam: { value: world.biome === 'coastal' || world.biome === 'archipelago' ? 1.0 : 0.35 },
+        ...AIR_FOG_UNIFORMS,
       },
       vertexShader: /* glsl */ `
         varying vec3 vWorld;
-        varying float vFog;
         varying float vDist;
         void main() {
           vec4 world4 = modelMatrix * vec4(position, 1.0);
           vWorld = world4.xyz;
           vec4 mv = viewMatrix * world4;
           vDist = length(mv.xyz);
-          float f = vDist * ${FOG_DENSITY.toFixed(6)};
-          vFog = 1.0 - exp(-f * f);
           gl_Position = projectionMatrix * mv;
         }
       `,
@@ -138,10 +136,10 @@ export function Water({ world }: { world: World }) {
         uniform float uWindAmt;
         uniform float uFoam;
         varying vec3 vWorld;
-        varying float vFog;
         varying float vDist;
 
         ${CLOUD_SHADOW_GLSL}
+        ${AIR_FOG_GLSL}
 
         /** One texel, decoded. The 16 bits arrive split across two bytes. */
         float texelH(vec2 texel) {
@@ -344,13 +342,29 @@ export function Water({ world }: { world: World }) {
           //
           // This is the difference between having a horizon and not having one.
           // Fogging the sea to exactly the colour the sky fogs to is what the
-          // shared uFog was for, and at the shoreline it is right — that is the
-          // seam the single fog constant exists to hide. But carried all the way
-          // out it means the far sea and the low sky arrive at identical values
-          // and the line between them stops existing, so open water reads as more
-          // sky. A few percent is enough: the eye needs a step, not a stripe.
-          vec3 seaHaze = mix(uFog, uDeep, 0.17) * 0.94;
-          col = mix(col, seaHaze, vFog);
+          // shared fog source was for, and at the shoreline it is right — that
+          // is the seam the single source exists to hide. But carried all the
+          // way out it means the far sea and the low sky arrive at identical
+          // values and the line between them stops existing, so open water reads
+          // as more sky. A few percent is enough: the eye needs a step, not a
+          // stripe. Directional now, like everything else's: the sea hazes warm
+          // toward the sun, and the step below the sky survives on both sides.
+          //
+          // Water takes almost none of the mist — see airFogAmountW. The mist
+          // floor is the waterline, so at full weight every lake sat at maximum
+          // mist density and washed out to a pale patch. And it takes the
+          // directional colour at less than half strength, pulled further into
+          // the deep tone: measured on an alpine day, hazing the lakes toward
+          // the full sun-warm colour cost them a third of their blue-to-red
+          // separation and they stopped reading as water at all. The air over
+          // land belongs to the sun; the air's colour over water is half the
+          // water's own, which is also simply what the sea looks like.
+          vec3 seaHaze = mix(mix(uFogBase, airFogColor(-viewDir), 0.25), uDeep, 0.3) * 0.93;
+          col = mix(col, seaHaze, airFogAmountW(vDist, vWorld.y, 0.12));
+          // A third of an LSB of noise: the haze ramp over open water is the
+          // widest, shallowest gradient in the frame after the sky, and the sky
+          // already carries its own dither for exactly this reason.
+          col += (csHash(gl_FragCoord.xy) - 0.5) * 0.0026;
           // The soft shore itself: water thins to nothing over its last two
           // metres of depth, so the waterline is a gradient the width of a
           // beach's wet edge rather than an aliased intersection line.

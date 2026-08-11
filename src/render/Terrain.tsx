@@ -7,7 +7,7 @@ import { Noise2D, fbm } from '../sim/noise'
 import { mulberry32 } from '../sim/rng'
 import type { BiomeId, Rgb } from '../sim/palette'
 import { FLORA, createForestMask, createRockMask, forestAmount, forestColour, rockAmount } from '../sim/flora'
-import { CLOUD_SHADOW_GLSL, cloudShadowSeed } from './atmosphere'
+import { AIR_FOG_GLSL, AIR_FOG_UNIFORMS, CLOUD_SHADOW_GLSL, cloudShadowSeed } from './atmosphere'
 
 /**
  * Where the permanent snow starts, as a fraction of the day's height range. At or
@@ -112,14 +112,16 @@ function makeMaterial(world: World): MeshLambertMaterial {
     shader.uniforms.uCloudTime = uCloudTime
     shader.uniforms.uCloudWind = uCloudWind
     shader.uniforms.uCloudSeed = uCloudSeed
+    Object.assign(shader.uniforms, AIR_FOG_UNIFORMS)
     shader.vertexShader = shader.vertexShader
       .replace(
         '#include <common>',
-        '#include <common>\nvarying vec2 vCloudXZ;\nvarying float vEyeDist;\nvarying vec3 vWorldNormal;',
+        '#include <common>\nvarying vec2 vCloudXZ;\nvarying float vAirY;\nvarying float vEyeDist;\nvarying vec3 vWorldNormal;',
       )
       .replace(
         '#include <begin_vertex>',
         '#include <begin_vertex>\nvCloudXZ = (modelMatrix * vec4(position, 1.0)).xz;\n' +
+          'vAirY = (modelMatrix * vec4(position, 1.0)).y;\n' +
           // The relief below bends the normal in world space, because the field it
           // bends by is a function of world xz. Lighting wants view space, so the
           // world normal has to travel down as its own varying — `vNormal` has
@@ -132,12 +134,14 @@ function makeMaterial(world: World): MeshLambertMaterial {
         '#include <common>',
         `#include <common>
         varying vec2 vCloudXZ;
+        varying float vAirY;
         varying float vEyeDist;
         varying vec3 vWorldNormal;
         uniform float uCloudTime;
         uniform vec2 uCloudWind;
         uniform float uCloudSeed;
         ${CLOUD_SHADOW_GLSL}
+        ${AIR_FOG_GLSL}
 
         /**
          * Value noise with a quintic fade, for anything that gets differentiated.
@@ -248,7 +252,16 @@ function makeMaterial(world: World): MeshLambertMaterial {
           gl_FragColor.rgb *= 1.0 + (gd1 - 0.5) * 0.11 * f1 + (gd2 - 0.5) * 0.07 * f2;
         }
         gl_FragColor.rgb *= cloudShadow(vCloudXZ, uCloudWind, uCloudTime, uCloudSeed);
-        #include <fog_fragment>`,
+        {
+          // Directional haze in place of the stock flat fog — see atmosphere.ts.
+          vec3 airRay = vec3(vCloudXZ.x, vAirY, vCloudXZ.y) - cameraPosition;
+          float airDist = length(airRay);
+          gl_FragColor.rgb = mix(
+            gl_FragColor.rgb,
+            airFogColor(airRay / max(airDist, 1e-4)),
+            airFogAmount(airDist, vAirY)
+          );
+        }`,
       )
   }
   return mat

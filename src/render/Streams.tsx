@@ -14,7 +14,7 @@ import { rgbToHex, type Rgb } from '../sim/palette'
 import { meshHeight, type Heightfield } from '../sim/terrain'
 import { Noise2D } from '../sim/noise'
 import { mulberry32 } from '../sim/rng'
-import { CLOUD_SHADOW_GLSL, FOG_DENSITY, cloudShadowSeed } from './atmosphere'
+import { AIR_FOG_GLSL, AIR_FOG_UNIFORMS, CLOUD_SHADOW_GLSL, cloudShadowSeed } from './atmosphere'
 
 /**
  * Rivers, as geometry.
@@ -370,6 +370,7 @@ export function Streams({ world }: { world: World }) {
         uTime: { value: 0 },
         uCloudWind: { value: new Vector2(world.air.windX, world.air.windZ) },
         uCloudSeed: { value: cloudShadowSeed(world.seed) },
+        ...AIR_FOG_UNIFORMS,
       },
       vertexShader: /* glsl */ `
         attribute float aSide;
@@ -381,7 +382,7 @@ export function Streams({ world }: { world: World }) {
         varying vec2 vFlow;
         varying float vFoam;
         varying vec3 vWorld;
-        varying float vFogAmt;
+        varying float vFogDist;
         void main() {
           vec4 world4 = modelMatrix * vec4(position, 1.0);
           vWorld = world4.xyz;
@@ -390,8 +391,7 @@ export function Streams({ world }: { world: World }) {
           vFlow = aFlow;
           vFoam = aFoam;
           vec4 mv = viewMatrix * world4;
-          float f = length(mv.xyz) * ${FOG_DENSITY.toFixed(6)};
-          vFogAmt = 1.0 - exp(-f * f);
+          vFogDist = length(mv.xyz);
           gl_Position = projectionMatrix * mv;
         }
       `,
@@ -413,9 +413,10 @@ export function Streams({ world }: { world: World }) {
         varying vec2 vFlow;
         varying float vFoam;
         varying vec3 vWorld;
-        varying float vFogAmt;
+        varying float vFogDist;
 
         ${CLOUD_SHADOW_GLSL}
+        ${AIR_FOG_GLSL}
 
         /** The sky's own gradient — the same two steps Sky.tsx and the lake use. */
         vec3 skyTone(float up) {
@@ -554,7 +555,9 @@ export function Streams({ world }: { world: World }) {
           col += uSun * pow(max(dot(nrm, hv), 0.0), 180.0) * 0.7;
 
           col *= cloudShadow(vWorld.xz, uCloudWind, uTime, uCloudSeed);
-          col = mix(col, uFog, vFogAmt);
+          // The shared directional haze, so a distant river hazes to the same
+          // colour as the hillside it runs down.
+          col = mix(col, airFogColor(-viewDir), airFogAmount(vFogDist, vWorld.y));
 
           // Feathered edges. The ribbon is a strip laid on a hillside, and a hard
           // boundary would draw its own outline; fading the last fifth lets the

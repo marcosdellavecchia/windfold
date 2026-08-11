@@ -33,6 +33,7 @@ import type { Noise2D } from '../sim/noise'
 import { mulberry32 } from '../sim/rng'
 import { sampleGradient, sampleHeight, sampleWet, smoothstep, clamp01 } from '../sim/terrain'
 import type { Palette, Rgb } from '../sim/palette'
+import { patchAirFog } from './atmosphere'
 
 /** Scatter cell size, metres. */
 const CELL = 384
@@ -103,6 +104,9 @@ export function Trees({ world }: { world: World }) {
 
     const make = (geo: BufferGeometry, cap: number) => {
       const mat = new MeshLambertMaterial({ vertexColors: true })
+      // Trees carry to the fog limit, where a flat-fogged silhouette against
+      // directionally-hazed terrain would show as the wrong colour of tree.
+      patchAirFog(mat)
       const mesh = new InstancedMesh(geo, mat, cap)
       mesh.instanceColor = new InstancedBufferAttribute(new Float32Array(cap * 3), 3)
       mesh.frustumCulled = false

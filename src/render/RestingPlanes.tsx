@@ -20,6 +20,7 @@ import type { RestPoint } from '../game/net'
 import { mulberry32 } from '../sim/rng'
 import { sampleGradient, sampleHeight, surfaceHeight } from '../sim/terrain'
 import { buildDart } from './PaperPlane'
+import { patchAirFog } from './atmosphere'
 
 /**
  * Where other players' flights ended, as paper on the ground.
@@ -62,11 +63,9 @@ export function RestingPlanes({ world, rests }: { world: World; rests: RestPoint
   const camera = useThree((s) => s.camera)
 
   const built = useMemo(() => {
-    const mesh = new InstancedMesh(
-      buildDart(),
-      new MeshLambertMaterial({ vertexColors: true, side: 2 }),
-      MAX,
-    )
+    const restMat = new MeshLambertMaterial({ vertexColors: true, side: 2 })
+    patchAirFog(restMat)
+    const mesh = new InstancedMesh(buildDart(), restMat, MAX)
     mesh.instanceColor = new InstancedBufferAttribute(new Float32Array(MAX * 3), 3)
     mesh.frustumCulled = false
     mesh.count = 0

@@ -31,7 +31,7 @@ import { Birds } from './Birds'
 import { Herds } from './Herds'
 import { Landmarks } from './Landmarks'
 import { Motes } from './Motes'
-import { FOG_DENSITY } from './atmosphere'
+import { FOG_DENSITY, updateAirFog } from './atmosphere'
 import { Sky } from './Sky'
 import { Thermals } from './Thermals'
 import { PaperPlane, buildDartShadow } from './PaperPlane'
@@ -56,6 +56,10 @@ export function Scene({
   const planeRef = useRef<Group>(null)
   const trail = useMemo(() => new Trail([0.55, 0.9, 1.0]), [])
   useEffect(() => () => trail.dispose(), [trail])
+
+  // The directional haze uniforms are shared by reference across every material
+  // in the scene, so this one call re-points all of them at the new day.
+  useMemo(() => updateAirFog(world), [world])
 
   const pal = world.palette
 
