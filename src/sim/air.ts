@@ -44,7 +44,13 @@ const RIDGE_DECAY = 220 // metres above terrain
 // 6 km: roughly one per 2.7 km^2.
 const THERMAL_COUNT = 48
 
-export function generateAir(hf: Heightfield, rng: Rng): Air {
+/**
+ * `vent`, when present, is the volcanic landmark: a permanent thermal is seeded
+ * at it before the natural columns are drawn. It goes in first so the existing
+ * separation test keeps natural columns off it, and it draws nothing from `rng`,
+ * so days without a vent are untouched byte for byte.
+ */
+export function generateAir(hf: Heightfield, rng: Rng, vent?: { x: number; z: number }): Air {
   const windDir = rng() * Math.PI * 2
   // Deliberately gentle relative to a 21 m/s glider. A stronger wind drifts a
   // circling aircraft out of any ground-anchored thermal faster than it can
@@ -83,6 +89,23 @@ export function generateAir(hf: Heightfield, rng: Rng): Air {
   const target = Math.round(THERMAL_COUNT * (1 + street * 0.5))
 
   const thermals: Thermal[] = []
+  if (vent) {
+    const base = sampleHeight(hf, vent.x, vent.z)
+    thermals.push({
+      x: vent.x,
+      z: vent.z,
+      // Wider and stronger than anything the natural ranges (260-460 m, 7-13 m/s)
+      // can roll, and taller than the 520-980 m natural tops: the vent is the
+      // day's landmark, and the lift is what makes it worth flying to rather
+      // than just looking at. It sits on the map's summit, so it is also the
+      // highest climb available — the reward for reaching the most visible
+      // point on a volcanic day.
+      radius: 500,
+      strength: 14,
+      top: base + 1200,
+      base,
+    })
+  }
   let guard = 0
   while (thermals.length < target && guard++ < 6000) {
     let x = randRange(rng, -HALF_WORLD * 0.88, HALF_WORLD * 0.88)

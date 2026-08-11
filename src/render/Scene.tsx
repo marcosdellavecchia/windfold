@@ -29,6 +29,7 @@ import { Clouds } from './Clouds'
 import { Trees } from './Trees'
 import { Birds } from './Birds'
 import { Herds } from './Herds'
+import { Landmarks } from './Landmarks'
 import { Motes } from './Motes'
 import { FOG_DENSITY } from './atmosphere'
 import { Sky } from './Sky'
@@ -82,6 +83,7 @@ export function Scene({
       <Clouds world={world} />
       <Birds world={world} />
       <Herds world={world} planeRef={planeRef} />
+      <Landmarks world={world} />
       <RestingPlanes world={world} rests={rests ?? null} />
       <Motes world={world} />
       <primitive object={trail.object} />

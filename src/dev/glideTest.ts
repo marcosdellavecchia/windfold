@@ -67,6 +67,22 @@ for (let i = 0; same && i < a.heightfield.data.length; i++) {
 }
 console.log(`day 7 rebuilt byte-identical: ${same}`)
 
+console.log('\n--- landmarks: does the day\'s object land somewhere sane? ------')
+for (let day = 0; day < SWEEP_DAYS; day++) {
+  const w = buildWorld(day)
+  if (!w.landmark) continue
+  const lm = w.landmark
+  const fromLaunch = Math.hypot(lm.x - w.launch.pos.x, lm.z - w.launch.pos.z)
+  const overWater = w.heightfield.hasWater ? lm.y - w.heightfield.waterLevel : NaN
+  console.log(
+    `day ${String(day).padStart(2)} ${w.biome.padEnd(12)} ${lm.kind.padEnd(11)} ` +
+      `at (${lm.x.toFixed(0).padStart(5)}, ${lm.z.toFixed(0).padStart(5)}) ` +
+      `ground ${lm.y.toFixed(0).padStart(4)}m ` +
+      `(summit ${w.heightfield.max.toFixed(0)}m, +${overWater.toFixed(0)}m over water)  ` +
+      `${(fromLaunch / 1000).toFixed(1)}km from launch`,
+  )
+}
+
 console.log('\n--- launch sites: is altitude actually scarce? -----------------')
 for (let day = 0; day < SWEEP_DAYS; day++) {
   const w = buildWorld(day)

@@ -1,4 +1,5 @@
 import type { World } from '../sim/world'
+import { LANDMARK_NAMES } from '../sim/landmark'
 import type { WorldRecord } from './persist'
 
 /**
@@ -25,7 +26,9 @@ export function shareCard(world: World, rec: WorldRecord): string {
   const landed = rec.landed ? ' \u{1F6EC}' : ''
 
   const lines = [
-    `✈️ Windfold #${world.day} · ${world.palette.mood} ${world.biome}`,
+    // The landmark earns its spot on the card: "the lighthouse day" is how a
+    // world gets talked about, and the card is where that phrase starts.
+    `✈️ Windfold #${world.day} · ${world.palette.mood} ${world.biome} · ${LANDMARK_NAMES[world.landmark.kind]}`,
     `${m} m · ${flights} · ${par}${landed}`,
   ]
   if (rec.profile.length > 0) {
