@@ -66,16 +66,13 @@ export const FLORA: Record<BiomeId, FloraSpec> = {
   valley: { density: 42, treeline: 0.82, floor: 0.0, broadleaf: 0.6, maxSlope: 1.0, height: [18, 34], accent: 0.22, clump: 0.75, rock: 0.31 },
   // Almost nothing survives; a few charred stands low on the flanks.
   volcanic: { density: 6, treeline: 0.32, floor: 0.02, broadleaf: 0.2, maxSlope: 0.6, height: [12, 22], accent: 0.04, clump: 0.85, rock: 0.71 },
-  // Hedgerow country: broadleaf copses between open pasture, grass nearly to the
-  // top. The most clumped biome in the game, because a copse is the entire idea.
-  field: { density: 27, treeline: 0.94, floor: 0.01, broadleaf: 0.85, maxSlope: 0.6, height: [12, 24], accent: 0.2, clump: 0.9, rock: 0.1 },
   // Palms and tropical canopy right down to the beaches.
   archipelago: { density: 30, treeline: 0.7, floor: 0.005, broadleaf: 0.88, maxSlope: 0.75, height: [14, 24], accent: 0.14, clump: 0.6, rock: 0.51 },
 }
 
 /* -------------------------------------------------------------- understory ---- */
 
-export type DetailKind = 'boulder' | 'cactus' | 'palm' | 'shrub' | 'spire' | 'bale' | 'reed' | 'tuft'
+export type DetailKind = 'boulder' | 'cactus' | 'palm' | 'shrub' | 'spire' | 'reed' | 'tuft'
 
 /**
  * The second thing that grows — or in half the biomes, does not grow at all.
@@ -141,10 +138,6 @@ export const DETAIL: Record<BiomeId, DetailSpec> = {
   valley: { kind: 'shrub', density: 11, slope: [0, 0.7], band: [0, 0.78], height: [2, 4.5], inForest: 1, shore: 0, riverbank: 0, bankDensity: 0 },
   // Basalt columns. Cooling lava cracks into hexagons, so these are hexagonal.
   volcanic: { kind: 'spire', density: 5, slope: [0.1, 1.2], band: [0.05, 0.88], height: [8, 22], inForest: 1, shore: 0, riverbank: 0, bankDensity: 0 },
-  // Hay bales on the open flats, never under the trees. Twice life size, because
-  // a true 1.5 m drum vanishes from 300 m up — the same slightly-wrong-on-purpose
-  // licence as the flattened sun, spent on the ground.
-  field: { kind: 'bale', density: 6, slope: [0, 0.22], band: [0.03, 0.85], height: [2.4, 3.4], inForest: 0, shore: 0, riverbank: 0, bankDensity: 0 },
   // Palms right down the beach, in the band the forest mask is told to avoid.
   archipelago: { kind: 'palm', density: 9, slope: [0, 0.36], band: [0, 0.4], height: [10, 18], inForest: 1, shore: 95, riverbank: 0, bankDensity: 0 },
 }
@@ -153,8 +146,8 @@ export const DETAIL: Record<BiomeId, DetailSpec> = {
  * The second understory, where a biome has one. Water-edge species mostly:
  * reeds ringing the lakes and ponds, dry grass tufts on the beaches the wide
  * sand aprons opened up. One more instanced draw call on the biomes that use
- * it, nothing anywhere else. Oversized like the hay bales, for the same
- * reason: true-scale reeds vanish from a glider.
+ * it, nothing anywhere else. Oversized on purpose: true-scale reeds vanish
+ * from a glider.
  */
 export const DETAIL2: Record<BiomeId, DetailSpec | null> = {
   // Grass along the meltwater, and nowhere else — `shore` is 0, so the drainage
@@ -168,7 +161,6 @@ export const DETAIL2: Record<BiomeId, DetailSpec | null> = {
   coastal: { kind: 'tuft', density: 8, slope: [0, 0.45], band: [0, 1], height: [0.9, 1.6], inForest: 0.4, shore: 55, riverbank: 0.32, bankDensity: 45 },
   valley: { kind: 'reed', density: 7, slope: [0, 0.3], band: [0, 1], height: [1.6, 2.8], inForest: 1, shore: 14, riverbank: 0.25, bankDensity: 60 },
   volcanic: null,
-  field: { kind: 'reed', density: 7, slope: [0, 0.3], band: [0, 1], height: [1.6, 2.8], inForest: 1, shore: 14, riverbank: 0.25, bankDensity: 60 },
   archipelago: { kind: 'tuft', density: 8, slope: [0, 0.45], band: [0, 1], height: [0.9, 1.6], inForest: 0.4, shore: 55, riverbank: 0.32, bankDensity: 40 },
 }
 

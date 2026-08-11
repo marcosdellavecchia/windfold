@@ -63,10 +63,10 @@ export function generateAir(hf: Heightfield, rng: Rng, vent?: { x: number; z: nu
   // ambient sink is a day with no decisions in it. Real flat country compensates
   // the same way this does — convection organizes into streets, rows of thermals
   // aligned downwind. Below ~520 m of relief the columns start snapping to a
-  // street lattice, and by ~200 m (a field day) the organization is total: the
-  // sky becomes rows of cumulus and the game becomes "pick a street and run it".
-  // Driven by measured relief rather than by biome, so a flat plain-landform day
-  // in any biome gets the same rescue.
+  // street lattice, and by ~200 m the organization is total: the sky becomes
+  // rows of cumulus and the game becomes "pick a street and run it". Driven by
+  // measured relief rather than by biome, so a flat plain-landform day in any
+  // biome gets the same rescue.
   const relief = hf.max - hf.min
   const street = clamp01((520 - relief) / 320)
   const streetSpacing = randRange(rng, 1400, 2000)

@@ -30,7 +30,7 @@ import { merge, translated, scaled, mix, scale } from './Trees'
  * Volcanic days have no herd on purpose. Almost nothing survives there, and the
  * one biome with an empty ground says more than a seventh species would.
  */
-type HerdKind = 'sheep' | 'deer' | 'ibex' | 'flamingo' | 'seal' | 'turtle'
+type HerdKind = 'deer' | 'ibex' | 'flamingo' | 'seal' | 'turtle'
 
 interface HerdSpec {
   kind: HerdKind
@@ -44,7 +44,7 @@ interface HerdSpec {
   band: [number, number]
   /** If > 0, only within this many metres above the waterline. */
   shore: number
-  /** Body length in metres — deliberately a touch large, like the hay bales. */
+  /** Body length in metres — deliberately a touch large, like the reeds. */
   scale: [number, number]
   /** How far members stray from the herd centre, metres. */
   spread: number
@@ -62,8 +62,6 @@ interface HerdSpec {
 }
 
 const HERDS: Record<BiomeId, HerdSpec | null> = {
-  // Flocks in the pastures between the hedgerows.
-  field: { kind: 'sheep', chance: 0.22, size: [5, 11], maxSlope: 0.22, band: [0.03, 0.7], shore: 0, scale: [2.2, 2.8], spread: 34, startle: 1.0 },
   // Small groups at the edges of the clearings.
   valley: { kind: 'deer', chance: 0.12, size: [3, 6], maxSlope: 0.3, band: [0.02, 0.6], shore: 0, scale: [2.4, 3.0], spread: 26, startle: 1.45 },
   // Strings of them on ledges the trees cannot reach.
@@ -246,7 +244,7 @@ function scatter(world: World, spec: HerdSpec, built: Built, cx: number, cz: num
         built.home[n * 2] = hx + Math.cos(a) * d
         built.home[n * 2 + 1] = hz + Math.sin(a) * d
         built.phase[n] = rng() * Math.PI * 2
-        // Turtles amble, sheep drift, deer are the restless ones.
+        // Turtles amble, most species drift, deer are the restless ones.
         built.rate[n] = (0.05 + rng() * 0.1) * (spec.kind === 'deer' ? 1.7 : spec.kind === 'turtle' ? 0.4 : 1)
         built.orbit[n] = 4 + rng() * 11
         built.size[n] = (spec.scale[0] + rng() * (spec.scale[1] - spec.scale[0])) * edge
@@ -361,12 +359,6 @@ function herdGeometry(kind: HerdKind): BufferGeometry {
     translated(scaled(new IcosahedronGeometry(0.5, 0), s, s, s), x, y, z)
 
   switch (kind) {
-    case 'sheep':
-      // Suffolk colouring: pale fleece, dark face.
-      return merge([
-        { geo: body(0.62, 0.44, 0.9, 0.42), tint: 1.0 },
-        { geo: head(0.22, 0, 0.52, -0.48), tint: 0.3 },
-      ])
     case 'deer':
       return merge([
         { geo: body(0.4, 0.4, 0.95, 0.5), tint: 1.0 },
@@ -400,8 +392,6 @@ function herdGeometry(kind: HerdKind): BufferGeometry {
 /** Herd colours off the day's palette, so the animals live in the same light. */
 function herdColours(kind: HerdKind, pal: Palette): Rgb[] {
   switch (kind) {
-    case 'sheep':
-      return [mix([1, 1, 1], pal.low, 0.14), mix([0.94, 0.92, 0.88], pal.low, 0.2)]
     case 'deer':
       return [mix(pal.rock, pal.sun, 0.3), mix(pal.rock, pal.mid, 0.4)]
     case 'ibex':

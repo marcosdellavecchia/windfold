@@ -170,7 +170,7 @@ interface Built {
 
 /**
  * The understory species that belong on stone. Everything else — cactus, palm,
- * shrub, bale, reed, tuft — wants soil, and the rock field is none of its business.
+ * shrub, reed, tuft — wants soil, and the rock field is none of its business.
  */
 const STONY = new Set<DetailKind>(['boulder', 'spire'])
 
@@ -574,17 +574,6 @@ function detailGeometry(kind: DetailKind, trunkTint: number): BufferGeometry {
         { geo: translated(rotatedZ(new CylinderGeometry(0.12, 0.2, 0.62, 6), -0.1), 0.26, 0.31, 0.1), tint: 0.78 },
       ])
     }
-    case 'bale': {
-      // A drum on its side. The darker end caps are what read as "bale" rather
-      // than "log" — that is where the spiral of the wrap shows on a real one.
-      const drum = rotatedX(new CylinderGeometry(0.5, 0.5, 0.88, 10), Math.PI / 2)
-      const cap = (z: number) => translated(rotatedX(new CylinderGeometry(0.44, 0.44, 0.05, 10), Math.PI / 2), 0, 0.5, z)
-      return merge([
-        { geo: translated(drum, 0, 0.5, 0), tint: 1.0 },
-        { geo: cap(0.45), tint: 0.68 },
-        { geo: cap(-0.45), tint: 0.68 },
-      ])
-    }
     case 'reed': {
       // A clump of leaning stalks with dark seed heads — cattails. The heads
       // are what read as reeds instead of thin grass at any distance.
@@ -631,9 +620,6 @@ function detailColours(kind: DetailKind, pal: Palette): Rgb[] {
       return [scale(pal.mid, 0.8), mix(pal.mid, pal.low, 0.35), scale(pal.mid, 0.62)]
     case 'shrub':
       return [scale(pal.low, 0.8), mix(pal.low, pal.mid, 0.5), mix(pal.mid, pal.bloom, 0.22)]
-    case 'bale':
-      // Cut hay is the sun's colour, not the grass's — a bale is dried light.
-      return [mix(pal.sun, pal.mid, 0.4), mix(pal.sun, pal.mid, 0.58), scale(mix(pal.sun, pal.mid, 0.45), 0.86)]
     case 'reed':
       return [mix(pal.low, pal.mid, 0.5), scale(pal.mid, 0.78), mix(pal.mid, pal.rock, 0.25)]
     case 'tuft':

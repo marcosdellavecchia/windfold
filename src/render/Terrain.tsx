@@ -25,7 +25,6 @@ const SNOWLINE: Record<BiomeId, number> = {
   // Ash and pumice on the upper cones, which behaves exactly like snow and is the
   // only pale thing in an otherwise very dark palette.
   volcanic: 0.78,
-  field: 1,
   archipelago: 1,
 }
 
@@ -318,42 +317,6 @@ function buildGeometry(world: World): BufferGeometry {
       if (rocky > 0) {
         lerp3(c, c, pal.rock, rocky * 0.72)
         lerp3(c, c, pal.mineral, rocky * strata * 0.26)
-      }
-
-      // The farmland quilt, field biome only. A patchwork of worked fields is
-      // *the* iconic view from a glider, and the flats here were the largest
-      // unbroken colour in the game. Cells are warped by the same noises as
-      // everything else so the grid reads as country, not graph paper; some
-      // fields turn toward hay gold, and the darker seams between cells read
-      // as hedgerows. All free — this runs once at world build.
-      if (world.biome === 'field') {
-        const cell = 470
-        const qx = (x + patch * 210) / cell
-        const qz = (z + vein * 210) / cell
-        const cx = Math.floor(qx)
-        const cz = Math.floor(qz)
-        const open =
-          (1 - forest) * (1 - smoothstep(0.12, 0.26, slope)) * (1 - smoothstep(0.45, 0.7, t))
-        if (open > 0.05) {
-          const tone = hash2(cx, cz)
-          const gold = smoothstep(0.62, 0.8, hash2(cx + 77, cz - 31))
-          // Each field is a hair lighter or darker than its neighbours...
-          const v = 1 + (tone - 0.5) * 0.14 * open
-          c[0] *= v
-          c[1] *= v
-          c[2] *= v
-          // ...some are cut for hay...
-          if (gold > 0) lerp3(c, c, pal.mid, gold * open * 0.38)
-          // ...and the seams between them are hedgerows.
-          const fx = qx - cx
-          const fz = qz - cz
-          const edge = Math.min(fx, 1 - fx, fz, 1 - fz)
-          const hedge = 1 - smoothstep(0.025, 0.06, edge)
-          const dark = 1 - hedge * open * 0.24
-          c[0] *= dark
-          c[1] *= dark
-          c[2] *= dark
-        }
       }
 
       if (snowline < 1) {

@@ -15,12 +15,13 @@ and cut. See [The game today](#the-game-today) for what exists and
 Everything currently in the shipped build, at a glance:
 
 **The world.** One 12 km procedural landscape per day, identical for everyone on
-Earth, from a seed derived from the date. Seven biomes on rotation — alpine,
-mesa, coastal, valley, volcanic, field, archipelago — each day drawing its own
+Earth, from a seed derived from the date. Six biomes on a seven-slot rotation —
+alpine, mesa, coastal, valley, volcanic, archipelago, with alpine holding two
+slots since the field biome was cut — each day drawing its own
 relief, water, one or two structural landforms (rivers, canyons, caldera,
 escarpment, dunes, terraces, buttes, glacial trough, crater field), a colour
-grade, forests with per-day character and rare blossom/autumn seasons, farmland
-quilts, beaches with wet sand, herds of animals, cloud shadows, swell and surf
+grade, forests with per-day character and rare blossom/autumn seasons,
+beaches with wet sand, herds of animals, cloud shadows, swell and surf
 on the sea, and a sky with sun halo, daylight stars, a moon with earthshine,
 and the occasional falling star. `R` rerolls a world for testing; `?world=N`
 links to any specific one.
@@ -344,7 +345,7 @@ src/sim/          no React, no scene graph — steppable headlessly
   rng.ts          mulberry32 + FNV-1a seed hashing
   noise.ts        seeded Perlin, fbm / ridged / billow
   terrain.ts      heightfield generation, per-day shape and landforms, sampling
-  palette.ts      seven biome palettes in HSL, seeded hue rotation, daily grade
+  palette.ts      six biome palettes in HSL, seeded hue rotation, daily grade
   air.ts          wind, thermal columns, ridge lift, thermal streets
   flight.ts       the flight model: fixed-timestep aero integrator, landings
   par.ts          the paper pilot: chase autopilot + the day's par
@@ -362,7 +363,7 @@ src/render/       R3F components; all transforms driven from one useFrame
   Clouds.tsx      cumulus billboards, one per thermal
   Water.tsx       fresnel, glitter, swell, whitecaps, surf, soft shorelines
   Birds.tsx       flocks circling the nearest columns, and one skein passing through
-  Herds.tsx       animals: sheep, deer, ibex, flamingos, seals, turtles
+  Herds.tsx       animals: deer, ibex, flamingos, seals, turtles
   RestingPlanes.tsx  other players' darts on the ground, with floating name labels
   Ghosts.tsx      your own previous attempts as faint lines, best brightest
   PaperPlane.tsx  the folded dart: crease facets, sun transmission, cloud shade
@@ -466,6 +467,13 @@ thermal, the sky becomes rows of cumulus and the day becomes "pick a street and 
 it". Streets key off measured relief rather than biome, so a flat plain-landform day
 in any biome gets the same rescue — the two worst days in the 120-day sample were
 both `plain`, and this is aimed at exactly that hole.
+
+(The field biome was later cut — in play it read as the day with nothing in it —
+but everything it taught the air stayed: streets key off relief, so any flat day
+still organizes. Its rotation slot went to a second alpine rather than shrinking
+the list, because `biome = BIOME_ORDER[day % 7]` and a six-slot list would have
+remapped nearly every historical world out from under its share links, records,
+and resting planes.)
 
 The first build ran the streets dead downwind, which is where real ones run, and it
 was a free ride: launch heading is also downwind, so a hands-off glide fell out of

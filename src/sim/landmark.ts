@@ -9,23 +9,15 @@ import type { BiomeId } from './palette'
  * Terrain gives a day its character but not a *place* — nothing on a procedural
  * heightfield has a name or a direction. One landmark fixes that: it is the point
  * players mention when they compare flights ("out past the lighthouse"), and
- * where a kind can carry information it does. The windmill yaws to face the wind
- * and spins with its speed; the vent's smoke leans downwind; the vent also
- * anchors a strong permanent thermal, so the most visible point on a volcanic
- * map is also the best lift on it.
+ * where a kind can carry information it does. The vent's smoke leans downwind,
+ * and the vent also anchors a strong permanent thermal, so the most visible
+ * point on a volcanic map is also the best lift on it.
  *
  * Every biome has exactly one kind. The four quieter ones are pure places — a
  * cross marking the summit, an arch worth flying through, a bridge over the
  * day's river, a wreck in the shallows — with no flight-model side effects.
  */
-export type LandmarkKind =
-  | 'lighthouse'
-  | 'windmill'
-  | 'vent'
-  | 'cross'
-  | 'arch'
-  | 'bridge'
-  | 'wreck'
+export type LandmarkKind = 'lighthouse' | 'vent' | 'cross' | 'arch' | 'bridge' | 'wreck'
 
 export interface Landmark {
   kind: LandmarkKind
@@ -36,8 +28,7 @@ export interface Landmark {
   /**
    * Yaw, in three.js rotation.y terms, for kinds with a meaningful facing:
    * the bridge lies across its river, the arch and wreck take a seeded one.
-   * Absent for the radially symmetric kinds (and the windmill, which faces
-   * the wind and computes that at render time).
+   * Absent for the radially symmetric kinds.
    */
   heading?: number
 }
@@ -48,14 +39,12 @@ const KINDS: Record<BiomeId, LandmarkKind> = {
   coastal: 'lighthouse',
   valley: 'bridge',
   volcanic: 'vent',
-  field: 'windmill',
   archipelago: 'wreck',
 }
 
 /** What the share card calls each kind — the phrase a day gets known by. */
 export const LANDMARK_NAMES: Record<LandmarkKind, string> = {
   lighthouse: 'lighthouse',
-  windmill: 'windmill',
   vent: 'smoking vent',
   cross: 'summit cross',
   arch: 'rock arch',
@@ -93,7 +82,6 @@ const RING_R = 240
  */
 const TIE_MARGIN: Record<Exclude<LandmarkKind, 'vent' | 'cross' | 'bridge'>, number> = {
   lighthouse: 25,
-  windmill: 12,
   arch: 10,
   wreck: 1.5,
 }
@@ -204,26 +192,11 @@ export function placeLandmark(biome: BiomeId, hf: Heightfield, seed: number): La
         return sea * 60 + Math.min(h - hf.waterLevel, 90) * 0.6
       }
 
-      case 'windmill': {
-        // An open crest: gently sloped ground that still stands above its
-        // neighbourhood. The slope gate matters more than the score — a windmill
-        // on a hillside reads as sliding off it.
-        if (hf.hasWater && h < hf.waterLevel + 10) return -Infinity
-        sampleGradient(hf, x, z, grad)
-        if (Math.hypot(grad.x, grad.z) > 0.09) return -Infinity
-        let around = 0
-        for (let k = 0; k < 6; k++) {
-          const a = (k / 6) * Math.PI * 2
-          around += sampleHeight(hf, x + Math.cos(a) * 380, z + Math.sin(a) * 380)
-        }
-        return (h - around / 6) * 1.0 + h * 0.1
-      }
-
       case 'arch': {
         // An open bench in the middle band of the mesa: flat enough that the
-        // arch is obviously a built thing and not another rock tooth, high
-        // enough to stand against the sky. Slope gate looser than the
-        // windmill's — mesa ground is nowhere truly flat.
+        // arch stands clear of the broken ground around it, high enough to
+        // stand against the sky. The slope gate is forgiving — mesa ground is
+        // nowhere truly flat.
         if (hf.hasWater && h < hf.waterLevel + 10) return -Infinity
         const t = (h - hf.min) / Math.max(hf.max - hf.min, 1)
         if (t < 0.2 || t > 0.8) return -Infinity

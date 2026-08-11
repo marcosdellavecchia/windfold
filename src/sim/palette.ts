@@ -1,6 +1,6 @@
 import { mulberry32 } from './rng'
 
-export type BiomeId = 'alpine' | 'mesa' | 'coastal' | 'valley' | 'volcanic' | 'field' | 'archipelago'
+export type BiomeId = 'alpine' | 'mesa' | 'coastal' | 'valley' | 'volcanic' | 'archipelago'
 
 export const BIOME_ORDER: readonly BiomeId[] = [
   'alpine',
@@ -8,9 +8,14 @@ export const BIOME_ORDER: readonly BiomeId[] = [
   'coastal',
   'valley',
   'volcanic',
-  // Between the darkest biome and the wettest, because the rotation's job is to
-  // make consecutive days feel like different games: ash to hay, then hay to sea.
-  'field',
+  // Alpine again, in what used to be the field biome's slot. Field was cut for
+  // being the day with nothing in it, but its *slot* stays: the biome is
+  // `BIOME_ORDER[day % 7]`, so shrinking the list to six would remap almost
+  // every historical world — old share links, records and resting planes would
+  // all point at terrain that no longer exists. Repeating alpine keeps every
+  // non-field day exactly what it was, and the seed still makes the week's two
+  // alpine days different mountains.
+  'alpine',
   'archipelago',
 ]
 
@@ -154,29 +159,6 @@ const SPECS: Record<BiomeId, PaletteSpec> = {
     mineral: [0.6, 0.05, 0.26],
     // Black sand. The one shore in the game that is darker than the water.
     sand: [0.65, 0.08, 0.14],
-  },
-  field: {
-    // Hay country under a soft summer sky: green pasture low, gold standing grass
-    // above it, chalk showing through wherever the ground breaks. The brightest
-    // ground palette of the seven, because the land here is the whole frame —
-    // there are no peaks to carry the composition.
-    skyTop: [0.57, 0.52, 0.4],
-    skyHorizon: [0.12, 0.48, 0.78],
-    fog: [0.11, 0.36, 0.76],
-    sun: [0.1, 0.8, 0.85],
-    sunLight: [0.08, 0.42, 0.94],
-    ambient: [0.6, 0.26, 0.5],
-    low: [0.24, 0.42, 0.38],
-    mid: [0.15, 0.48, 0.5],
-    high: [0.13, 0.35, 0.62],
-    rock: [0.1, 0.12, 0.5],
-    water: [0.5, 0.42, 0.34],
-    glow: [0.93, 0.5, 0.72],
-    cirrus: [0.11, 0.3, 0.88],
-    // Poppies in the fallow strips.
-    bloom: [0.97, 0.55, 0.62],
-    mineral: [0.08, 0.18, 0.55],
-    sand: [0.1, 0.24, 0.58],
   },
   archipelago: {
     skyTop: [0.56, 0.6, 0.42],

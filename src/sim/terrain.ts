@@ -112,7 +112,6 @@ const LANDFORMS: Record<BiomeId, readonly LandformId[]> = {
   coastal: ['plain', 'rivers', 'escarpment', 'dunes', 'buttes'],
   valley: ['plain', 'rivers', 'rivers', 'terraces', 'escarpment', 'glacial'],
   volcanic: ['plain', 'canyons', 'caldera', 'caldera', 'craters'],
-  field: ['plain', 'rivers', 'rivers', 'escarpment', 'terraces', 'buttes'],
   archipelago: ['plain', 'rivers', 'terraces', 'escarpment'],
 }
 
@@ -203,26 +202,6 @@ const SHAPES: Record<BiomeId, BiomeShape> = {
     terrace: 0,
     islands: false,
     curve: 1.9,
-  },
-  field: {
-    // Rolling hay country. A third of the relief of anything else in the game,
-    // which is the point: this is the biome with no mountains in it. Ridge lift
-    // barely exists on ground this gentle, so the day's lift comes almost
-    // entirely from thermals — generateAir notices the low relief and organizes
-    // them into streets. Long-wavelength billow so the hills are swells you fly
-    // along, not bumps you fly over.
-    kind: 'billow',
-    amplitude: 230,
-    baseFreq: 1 / 3100,
-    octaves: 5,
-    lacunarity: 2.0,
-    gain: 0.46,
-    warp: 320,
-    // Ponds and a stream threading the lowest ground.
-    waterFrac: 0.06,
-    terrace: 0,
-    islands: false,
-    curve: 1.0,
   },
   archipelago: {
     kind: 'fbm',

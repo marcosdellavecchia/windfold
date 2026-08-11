@@ -29,19 +29,16 @@ import { merge, translated, rotatedX, rotatedZ, scaled, mix, scale } from './Tre
  * The day's landmark, drawn. Which biome gets what — and where it stands — is
  * decided in sim/landmark.ts; this file only knows how each kind looks and moves.
  *
- * Three of the kinds are instruments as much as scenery: the windmill faces into
- * the wind and its blades turn with wind speed; the vent's smoke leans downwind;
- * the lighthouse's beam sweeps, which is what makes a static white tower read as
- * *the* lighthouse from three kilometres out. The other four are pure places —
- * built once per world, no per-frame work at all. None of them collide — nothing
- * in this game does but the ground.
+ * Two of the kinds are instruments as much as scenery: the vent's smoke leans
+ * downwind, and the lighthouse's beam sweeps, which is what makes a static white
+ * tower read as *the* lighthouse from three kilometres out. The other four are
+ * pure places — built once per world, no per-frame work at all. None of them
+ * collide — nothing in this game does but the ground.
  */
 export function Landmarks({ world }: { world: World }) {
   switch (world.landmark.kind) {
     case 'lighthouse':
       return <Lighthouse world={world} />
-    case 'windmill':
-      return <Windmill world={world} />
     case 'vent':
       return <VentPlume world={world} />
     case 'cross':
@@ -170,79 +167,6 @@ function Lighthouse({ world }: { world: World }) {
 
   useFrame((_, dt) => {
     beam.rotation.y += Math.min(dt, 0.1) * LH_SWEEP
-  })
-
-  return <primitive object={group} />
-}
-
-/* ------------------------------------------------------------------ windmill */
-
-const WM_TOWER = 15
-/** Hub speed range, rad/s, mapped from the day's 2-5.5 m/s wind. */
-const WM_RPM_MIN = 0.7
-const WM_RPM_MAX = 2.6
-
-function Windmill({ world }: { world: World }) {
-  const { group, rotor, rate, dispose } = useMemo(() => {
-    const lm = world.landmark!
-    const pal = world.palette
-    const air = world.air
-    const g = new Group()
-    g.position.set(lm.x, meshHeight(world.heightfield, lm.x, lm.z) - SINK, lm.z)
-    // Face *into* the wind: (windX, windZ) points the way the air is going, and
-    // a mill that showed the weather its back would be lying about it. The hub
-    // is built looking down +Z, so yaw comes off +Z like the birds' does.
-    const len = Math.hypot(air.windX, air.windZ) || 1
-    g.rotation.y = Math.atan2(-air.windX / len, -air.windZ / len)
-
-    const body = merge([
-      { geo: translated(new CylinderGeometry(4.4, 5.0, 3, 8), 0, 1.5, 0), tint: 0.6 },
-      { geo: translated(new CylinderGeometry(2.0, 3.2, WM_TOWER, 8), 0, 3 + WM_TOWER / 2, 0), tint: 1.0 },
-      // The cap, nudged toward the rotor so the hub has something to hang from.
-      { geo: translated(new ConeGeometry(2.5, 3.2, 8), 0, 3 + WM_TOWER + 1.4, 0.4), tint: 0.5 },
-    ])
-    const bodyMat = new MeshLambertMaterial({
-      vertexColors: true,
-      // Plastered stone off the field's own light — the hay-bale trick: built
-      // things on this biome are the sun's colour more than the grass's.
-      color: rgbToHex(mix(pal.sand, mix(pal.sun, WHITE, 0.5), 0.4)),
-    })
-    g.add(new Mesh(body, bodyMat))
-
-    // Four blades and the hub as one mesh, spun on its local z. Boxes rather
-    // than planes so there is no backface to vanish when the camera circles it.
-    const bladeParts = [
-      { geo: rotatedX(new CylinderGeometry(0.55, 0.55, 1.2, 6), Math.PI / 2), tint: 0.4 },
-    ]
-    for (let k = 0; k < 4; k++) {
-      const blade = translated(new BoxGeometry(0.9, 6.2, 0.14), 0, 3.6, 0)
-      blade.rotateZ((k / 4) * Math.PI * 2)
-      bladeParts.push({ geo: blade, tint: 0.5 })
-    }
-    const rotorGeo = merge(bladeParts)
-    const rotorMesh = new Mesh(rotorGeo, bodyMat)
-    rotorMesh.position.set(0, 3 + WM_TOWER + 0.9, 2.1)
-    g.add(rotorMesh)
-
-    // Wind speed to blade rate, on the same 5.5 normalization the water's swell
-    // uses — 5.5 is the top of generateAir's range, so a gale day pegs at 1.
-    const windNorm = Math.min(air.windSpeed / 5.5, 1)
-    return {
-      group: g,
-      rotor: rotorMesh,
-      rate: WM_RPM_MIN + (WM_RPM_MAX - WM_RPM_MIN) * windNorm,
-      dispose: () => {
-        body.dispose()
-        rotorGeo.dispose()
-        bodyMat.dispose()
-      },
-    }
-  }, [world])
-
-  useEffect(() => dispose, [dispose])
-
-  useFrame((_, dt) => {
-    rotor.rotation.z -= Math.min(dt, 0.1) * rate
   })
 
   return <primitive object={group} />
