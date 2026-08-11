@@ -70,11 +70,16 @@ export function Water({ world }: { world: World }) {
     const uvScale = 1 / (hf.cell * n)
     const uvOffset = (HALF_WORLD / hf.cell + 0.5) / n
 
+    const isSea = world.biome === 'coastal' || world.biome === 'archipelago'
     const mat = new ShaderMaterial({
       transparent: true,
       side: DoubleSide,
       uniforms: {
-        uDeep: { value: new Color(rgbToHex(pal.water)).multiplyScalar(0.5) },
+        // The sea biomes take a deeper deep. Every band, shelf and foam line
+        // is a contrast *against* this colour, and at 0.5 the whole system
+        // measured as invisible — the ocean was too pale for anything painted
+        // on it to register. Lakes keep the lighter body they always had.
+        uDeep: { value: new Color(rgbToHex(pal.water)).multiplyScalar(isSea ? 0.38 : 0.5) },
         uShallow: { value: new Color(rgbToHex(pal.water)).multiplyScalar(1.45) },
         // The sky's own two colours rather than one blend of them, so the surface
         // can reflect the gradient instead of a single flat tone. What made the
@@ -103,6 +108,11 @@ export function Water({ world }: { world: World }) {
         uWindAmt: { value: Math.min(world.air.windSpeed / 5.5, 1) },
         // Surf belongs to the sea. Lakes get a gentle lap of the same code.
         uFoam: { value: world.biome === 'coastal' || world.biome === 'archipelago' ? 1.0 : 0.35 },
+        // What a bank reflection is made of: the day's low ground and rock,
+        // darkened the way a reflection of unlit shore actually is.
+        uBank: {
+          value: new Color(rgbToHex(pal.low)).lerp(new Color(rgbToHex(pal.rock)), 0.45).multiplyScalar(0.5),
+        },
         ...AIR_FOG_UNIFORMS,
       },
       vertexShader: /* glsl */ `
@@ -135,6 +145,7 @@ export function Water({ world }: { world: World }) {
         uniform vec2 uSwell;
         uniform float uWindAmt;
         uniform float uFoam;
+        uniform vec3 uBank;
         varying vec3 vWorld;
         varying float vDist;
 
@@ -170,6 +181,16 @@ export function Water({ world }: { world: World }) {
          * split-triangle interpolation the mesh does. Four fetches rather than one,
          * all inside a cache line, and the two surfaces are now the same surface.
          */
+        /**
+         * One hardware-filtered fetch — the bilinear surface, for questions
+         * like "is there a hill along this ray", where the exact mesh split
+         * that terrainAt reconstructs is four fetches of irrelevance.
+         */
+        float terrainFast(vec2 xz) {
+          vec2 hg = texture2D(uHeight, xz * uHeightUv.x + uHeightUv.y).rg;
+          return (hg.r * 65280.0 + hg.g * 255.0) / 65535.0 * uHeightRange + uHeightMin;
+        }
+
         float terrainAt(vec2 xz) {
           vec2 g = (xz * uHeightUv.x + uHeightUv.y) * ${n}.0 - 0.5;
           vec2 gi = floor(g);
@@ -185,14 +206,16 @@ export function Water({ world }: { world: World }) {
         }
 
         /**
-         * The sky's colour at a given height up the dome — the same two steps
+         * The sky's colour in a reflected direction — the same two steps
          * Sky.tsx paints with, so the reflection and the thing being reflected
-         * cannot drift apart. Only the vertical component is needed: the sun is
-         * handled by the speculars below, and everything else up there is a
-         * gradient in one axis.
+         * cannot drift apart. The horizon half of the gradient takes the
+         * directional haze: the sky is warm around the sun's azimuth now, so
+         * the water reflecting it glows on the same side — which is most of
+         * what a lake at golden hour actually does.
          */
-        vec3 skyTone(float up) {
-          vec3 s = mix(uSkyHorizon, uSkyTop, smoothstep(0.0, 0.55, up));
+        vec3 skyTone(float up, vec2 az) {
+          vec3 h = mix(uSkyHorizon, airFogColor(normalize(vec3(az.x, 0.12, az.y))), 0.55);
+          vec3 s = mix(h, uSkyTop, smoothstep(0.0, 0.55, up));
           return mix(uFog, s, smoothstep(-0.03, 0.28, up));
         }
 
@@ -204,21 +227,34 @@ export function Water({ world }: { world: World }) {
           return sin(u * 0.0203 - t * 0.185) + 0.35 * sin(u * 0.041 - t * 0.31 + 1.7);
         }
 
-        // Cheap crossed-wave surface. Three scales of ripple is enough to read as
-        // texture from 200 m up, and it costs no texture fetch.
-        //
-        // The wavelengths matter more than they look. The first version used 300 m
-        // features sliding at 43 m/s, because the phase rate was picked to feel
-        // right without checking it against the spatial frequency it divides into.
-        // On a lake 300 m across that is the entire surface pulsing at once, which
-        // reads as a rendering fault rather than as water. These are 20-80 m waves
-        // moving at 3-7 m/s, which is roughly what wind waves actually do, and at
-        // that scale the motion is texture instead of the lake itself moving.
+        /**
+         * Quintic-fade value noise, for the wave field that gets differentiated
+         * into a normal. The cubic-fade csNoise is C1: differencing it puts the
+         * lattice straight into the shading as a grid of squares — the same
+         * lesson the terrain relief learned, for the same reason.
+         */
+        float wNoise(vec2 p) {
+          vec2 i = floor(p);
+          vec2 f = fract(p);
+          f = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+          return mix(
+            mix(csHash(i), csHash(i + vec2(1.0, 0.0)), f.x),
+            mix(csHash(i + vec2(0.0, 1.0)), csHash(i + vec2(1.0, 1.0)), f.x),
+            f.y
+          );
+        }
+
+        // The chop. This used to be three multiplied sines, and multiplied
+        // sines are a plaid: the same diamond repeating to the horizon, which
+        // from altitude is exactly what the sea looked like. Two octaves of
+        // noise on rotated lattices have no repeat to find. Wavelengths of
+        // ~28 m and ~11 m sliding downwind at a few m/s — wind-wave numbers;
+        // the swell handles everything longer.
         float waves(vec2 p, float t) {
-          float w = sin(p.x * 0.08 + t * 0.55) * sin(p.y * 0.071 - t * 0.42);
-          w += 0.55 * sin(p.x * 0.17 - t * 0.7) * sin(p.y * 0.19 + t * 0.6);
-          w += 0.3 * sin((p.x + p.y) * 0.33 + t * 0.9);
-          return w / 1.85;
+          vec2 q = p - uSwell * (t * 2.6);
+          float w = wNoise(q * (1.0 / 28.0)) * 0.65
+                  + wNoise(mat2(0.857, 0.515, -0.515, 0.857) * q * (1.0 / 11.0) + 4.7) * 0.35;
+          return w * 2.0 - 1.0;
         }
 
         void main() {
@@ -246,8 +282,10 @@ export function Water({ world }: { world: World }) {
           // alias into corduroy stripes across the whole sea; fading the slope out
           // past a few hundred metres removes them and costs nothing visually,
           // because that detail was never legible at range anyway. Shorter waves
-          // alias sooner, so this fades sooner than it used to.
-          float ripple = 4.0 * (1.0 - smoothstep(260.0, 1400.0, vDist));
+          // alias sooner, so this fades sooner than it used to. And a windless
+          // day flattens it too — a calm lake is closer to a mirror than to a
+          // texture, and the mirror is the better look.
+          float ripple = 4.0 * mix(0.65, 1.0, uWindAmt) * (1.0 - smoothstep(260.0, 1600.0, vDist));
 
           // The swell tilts the same normal the chop perturbs, but being ~15x
           // longer it stays legible far past where the chop must fade — long
@@ -277,11 +315,30 @@ export function Water({ world }: { world: World }) {
           // holds — that bug was a basin breathing in place; these are bands
           // travelling at swell speed, scaled to the sea and nearly absent on
           // lakes, and they die well before the horizon's corduroy zone.
-          body *= 1.0 + s0 * 0.05 * uFoam * (1.0 - smoothstep(1800.0, 4200.0, vDist));
-          // True shallows off the height texture, layered over the mottle: the
-          // last dozen metres of depth lighten toward the shore, which is what
-          // makes a coast read as shelving instead of cut with a knife.
-          body = mix(uShallow, body, smoothstep(0.0, 12.0, depth));
+          body *= 1.0 + s0 * 0.07 * uFoam * (1.0 - smoothstep(1800.0, 4200.0, vDist));
+          // The chop, visible from above. Seen from overhead the fresnel term
+          // is tiny and the speculars need the sun in front of you, so the
+          // wave field the normals carry contributed *nothing* to a top-down
+          // view — which is most of why the sea read as a flat sheet from
+          // exactly the altitude the game is played at. The height field
+          // itself, as light and shade, drifting downwind. Zero-mean, so the
+          // fades never shift the sea's overall value.
+          // Brightness, not normals — so unlike the ripple above it, this is
+          // safe at range and *has* to reach it: the water this game actually
+          // looks at is one to six kilometres away, and a texture that fades
+          // by two was, measurably, invisible from anywhere a player ever is.
+          body *= 1.0 + w0 * 0.13 * mix(0.6, 1.0, uWindAmt)
+                * (1.0 - smoothstep(600.0, 3800.0, vDist));
+          // True shallows off the height texture, in three stops now: glassy
+          // sand-tinted water over the first couple of metres, a turquoise
+          // shelf, then the deep body arriving by ~20 m. The old single 12 m
+          // ramp is most of why every island wore a halo — pale sand under
+          // pale water under a pale surf band, three tones of the same cream.
+          // Pulling real colour in by the third stop is what gives the coast
+          // its line back.
+          vec3 shelf = mix(uShallow, uDeep, 0.4);
+          body = mix(shelf, body, smoothstep(7.0, 22.0, depth));
+          body = mix(uShallow, body, smoothstep(0.5, 7.0, depth));
           // What the surface actually reflects, per pixel: the sky in the
           // direction the wave sends the eye. Every crest and trough now returns
           // a different part of the dome, which is the whole reason a real water
@@ -293,12 +350,57 @@ export function Water({ world }: { world: World }) {
           // zenith-weighted colour. Keeping some of the zenith in the sample
           // preserves the variation without bringing the desert back.
           vec3 refl = reflect(-viewDir, n);
-          vec3 skyCol = skyTone(mix(max(refl.y, 0.0), 0.8, 0.45));
+          vec3 skyCol = skyTone(mix(max(refl.y, 0.0), 0.8, 0.45), refl.xz);
+
+          // What the mirror shows when it is not showing sky: the bank. The
+          // heightfield already lives in this shader as a texture, so the
+          // reflected ray can simply ask it — three cheap filtered samples
+          // marching out from the surface, darkening the reflection wherever
+          // rising ground stands in the way. It is a rough mirror, but from a
+          // glider a rough mirror of the right hillside in the right place is
+          // indistinguishable from a real one, and it is the whole difference
+          // between a lake and a blue-grey sheet. Chop dissolves it, as chop
+          // does.
+          float bankHit = 0.0;
+          for (int bi = 1; bi <= 3; bi++) {
+            float bt = float(bi * bi) * 30.0;
+            vec3 rp = vec3(vWorld.x, uWaterLevel, vWorld.z) + refl * bt;
+            float g = terrainFast(rp.xz);
+            bankHit = max(bankHit, smoothstep(3.0, 18.0, g - rp.y) * (1.0 - bt / 340.0));
+          }
+          skyCol = mix(skyCol, uBank, bankHit * mix(0.7, 0.3, uWindAmt) * (1.0 - smoothstep(900.0, 2200.0, vDist)));
 
           // Capped well below 1: a physically full mirror at grazing angles turns every
           // lake and sea into the same colour as the sky, and the landscape goes
-          // monochrome. Water keeps some of its own body colour at every angle.
-          vec3 col = mix(body, skyCol, clamp(fres, 0.0, 0.42));
+          // monochrome. Water keeps some of its own body colour at every angle —
+          // though a calm day earns more mirror than a windy one.
+          vec3 col = mix(body, skyCol, clamp(fres, 0.0, mix(0.55, 0.42, uWindAmt)));
+
+          // The far texture: ~900 m weather bands, wobbled off straight, in
+          // brightness only — brightness survives at ranges where normal
+          // detail is corduroy. Applied to the *final* colour rather than the
+          // body: at distance the pixel is mostly fresnel sky, and a band
+          // modulating only the body arrived at the screen at a third of its
+          // size, which is to say invisibly.
+          float s2 = sin(dot(vWorld.xz, uSwell) * 0.007 - uTime * 0.1 + csNoise(vWorld.xz * 0.0016) * 2.6);
+          col *= 1.0 + s2 * 0.09 * (0.35 + 0.65 * uFoam);
+
+          // Foam flecks: sparse threads of blown foam, stretched hard along
+          // the wind — the crisp element the soft fields above cannot supply,
+          // and from a few hundred metres up the clearest sign the sea is a
+          // surface with weather on it rather than a material.
+          vec2 fq = vec2(dot(vWorld.xz, uSwell), dot(vWorld.xz, vec2(-uSwell.y, uSwell.x)));
+          float fleck = smoothstep(0.86, 0.97, csNoise(vec2(fq.x * 0.02 - uTime * 0.5, fq.y * 0.12)));
+          col = mix(col, vec3(1.0), fleck * uWindAmt * 0.35 * (1.0 - smoothstep(600.0, 2400.0, vDist)));
+
+          // Facet shimmer against the bright sky, not just the sun: real
+          // water glitters in every direction, because every facet mirrors
+          // *somewhere* bright. This is what keeps a calm dusk sea alive when
+          // the sun is behind the camera and the glitter below has nothing to
+          // catch — the one case where the whole surface used to go dead.
+          vec3 h2 = normalize(vec3(0.0, 1.0, 0.0) + viewDir);
+          float skyFacet = pow(max(dot(n, h2), 0.0), 60.0);
+          col += skyCol * skyFacet * 0.22 * (1.0 - smoothstep(500.0, 2600.0, vDist));
 
           // Sun glitter: a tight specular on the wave slopes.
           vec3 h = normalize(normalize(uSunDir) + viewDir);
@@ -316,23 +418,61 @@ export function Water({ world }: { world: World }) {
           // individual caps are readable, and only as much wind as the day has.
           float crest = smoothstep(0.62, 1.15, w0 + s0 * 0.45) * (1.0 - smoothstep(200.0, 800.0, vDist));
           col += mix(skyCol, vec3(1.0), 0.4) * crest * uWindAmt * 0.12;
+          // And past them, cap *patches*: fields of broken water riding the
+          // wind, in brightness only, out to where the fog takes over. The sea
+          // between 800 m and 3 km used to have literally nothing happening on
+          // it — this is the something.
+          float capN = csNoise(vWorld.xz * 0.013 - uSwell * (uTime * 1.4) + 5.0);
+          float caps = smoothstep(0.72, 0.92, capN + s0 * 0.12) * uWindAmt
+                     * smoothstep(150.0, 450.0, vDist) * (1.0 - smoothstep(2400.0, 4200.0, vDist));
+          col = mix(col, vec3(1.0), caps * 0.18);
 
-          // Surf. Two regimes, split by distance, because the failure modes
-          // differ. Near: a breathing band over the last metres of depth, its
-          // pulse riding the swell phase so the edge crawls along the beach.
-          // Far: the band widens with distance so it never thins below a few
-          // pixels, and the animation freezes entirely — a distant surf line
-          // reads as a pale static rim from a glider, and an animated
-          // sub-pixel band is exactly the shaking-coast bug reborn.
-          float bandW = 4.5 + vDist * 0.012;
-          float foamBand = pow(1.0 - smoothstep(0.3, bandW, depth), 1.5);
-          float breathe = mix(
-            0.55 + 0.45 * sin(uTime * 1.1 + s0 * 2.2 + depth * 1.6),
-            0.6,
-            smoothstep(350.0, 1000.0, vDist)
-          );
-          float foam = foamBand * breathe * uFoam * (1.0 - smoothstep(1600.0, 3400.0, vDist));
-          col = mix(col, mix(uShallow, vec3(1.0), 0.55), foam * 0.45);
+          // --- surf ----------------------------------------------------------
+          // How far out the animation is allowed to run. Distant animated
+          // bands are the shaking-coast bug reborn, so motion fades to a
+          // static rim past a kilometre.
+          float farAnim = smoothstep(350.0, 1100.0, vDist);
+          // Foam is bubbles, not paint: a fast dapple that eats holes in
+          // every band below, which is most of what separates surf from a
+          // white contour line.
+          float bubbles = 0.55 + 0.45 * csNoise(vWorld.xz * 0.3 + uSwell * (uTime * mix(1.2, 0.0, farAnim)));
+
+          // The lip: a thin bright line hard against the waterline. Its
+          // narrowness is the point — this is what makes the coast read as a
+          // *line* again instead of the wide breathing band that smeared
+          // every island into a halo.
+          float lip = (1.0 - smoothstep(0.25, 2.2, depth)) * smoothstep(0.02, 0.3, depth);
+
+          // Breakers: foam lines keyed to the depth itself, so every line is
+          // parallel to its own beach and wraps around every headland for
+          // free. The phase marches shoreward; the swell pulses it; a slow
+          // along-shore noise breaks the lines so they arrive as surf rather
+          // than as bathymetry.
+          float bph = depth * 1.5 - uTime * mix(0.8, 0.0, farAnim) + s0 * 0.6;
+          float bline = smoothstep(0.72, 0.95, sin(bph) * 0.5 + 0.5);
+          float bmask = (1.0 - smoothstep(4.0, 24.0, depth)) * smoothstep(0.5, 1.6, depth);
+          float alongShore = 0.55 + 0.45 * csNoise(vWorld.xz * 0.016 + 11.0);
+          float breakers = bline * bmask * alongShore;
+
+          float surf = (lip * 1.2 + breakers * 1.1) * bubbles * uFoam;
+          // Far coasts keep a rim, never a halo — but the rim holds to the
+          // fog, because a coastline is exactly the thing the eye traces at
+          // distance.
+          surf *= 1.0 - smoothstep(3000.0, 5000.0, vDist) * 0.85;
+          // Foam is white. The first tint leaned on uShallow and every rim
+          // came out the colour of the water it was breaking on.
+          col = mix(col, mix(vec3(1.0), uShallow, 0.3), clamp(surf, 0.0, 1.0) * 0.6);
+
+          // Caustics: the light web on a shallow bed, two ridged noise fields
+          // folded against each other, drifting out of phase. Gated to
+          // snorkelling depth and the near field — from further away it is
+          // sub-pixel shimmer, which the sea has taught this file about twice.
+          float cr1 = 1.0 - abs(2.0 * csNoise(vWorld.xz * 0.11 + vec2(uTime * 0.045, 0.0)) - 1.0);
+          float cr2 = 1.0 - abs(2.0 * csNoise(vWorld.xz * 0.13 + vec2(4.7, -uTime * 0.05)) - 1.0);
+          float caust = pow(min(cr1, cr2), 3.0);
+          float cmask = smoothstep(0.4, 1.8, depth) * (1.0 - smoothstep(3.5, 9.0, depth))
+                      * (1.0 - smoothstep(300.0, 900.0, vDist));
+          col += mix(vec3(1.0), uSun, 0.4) * caust * cmask * 0.3;
 
           col *= cloudShadow(vWorld.xz, uCloudWind, uTime, uCloudSeed);
 

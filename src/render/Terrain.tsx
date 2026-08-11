@@ -504,6 +504,15 @@ function buildGeometry(world: World): BufferGeometry {
         if (above > 0 && above < 1) {
           const sandMask = (1 - smoothstep(0.55, 1, above)) * (1 - smoothstep(0.3, 0.8, slope))
           lerp3(c, c, pal.sand, sandMask * 0.8)
+          // Braided damp channels through the wide flats. On a coastal map the
+          // shore band can run tens of metres of elevation over near-level
+          // ground, and painted as one unbroken pale sheet it read as *water* —
+          // a dead, textureless sea filling half the frame, which no amount of
+          // work on the actual water could fix, because it was sand. Tidal
+          // flats are braided, and the braid is what says "wet land" instead.
+          const braid = smoothstep(0.12, 0.55, fbm(veinNoise, x * 1.7, z * 1.7, VEIN))
+          const flatness = 1 - smoothstep(0.08, 0.22, slope)
+          lerp3(c, c, wetSand, sandMask * braid * flatness * (1 - above * 0.55) * 0.55)
           lerp3(c, c, wetSand, sandMask * (1 - smoothstep(0.08, 0.24, above)) * 0.7)
         }
         // Shallows read as a beach, deeps darken toward the water colour.

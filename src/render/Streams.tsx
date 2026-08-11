@@ -190,6 +190,21 @@ export function Streams({ world }: { world: World }) {
       return Math.max(full, WIDTH_FLOOR) * 0.5
     }
 
+    // Where fast water lands, it churns. The strongest fall arriving at each
+    // node leaves a pool of foam that decays down the next stretch — the
+    // bright pad at the foot of every waterfall, which is how the eye finds
+    // the waterfall in the first place. Computed before the emit loop,
+    // because a stretch's pool comes from the stretches *above* it.
+    const fallOf = new Map<number, number>()
+    const poolAt = new Map<number, number>()
+    for (const i of touched) {
+      const j = hf.flowTo[i]
+      const straight = Math.hypot(px[j] - px[i], pz[j] - pz[i]) || 1
+      const fall = Math.min(1, Math.max(0, (hf.data[i] - hf.data[j]) / straight / 0.22))
+      fallOf.set(i, fall)
+      if (fall > 0.55) poolAt.set(j, Math.max(poolAt.get(j) ?? 0, fall))
+    }
+
     const cx: number[] = []
     const cz: number[] = []
     let v = 0
@@ -223,11 +238,12 @@ export function Streams({ world }: { world: World }) {
       // opening out, so the outlet inherits the width of the last dry cell.
       const wb = halfWidth(j, hf.wet[j] > 0 ? hf.wet[j] : hf.wet[i])
 
-      const straight = Math.hypot(bx - ax, bz - az) || 1
       // Whitewater where it falls steeply. Real streams are white exactly where
       // they are steep, and it is the one cue that separates a river from a
-      // painted line at any distance.
-      const fall = Math.min(1, Math.max(0, (hf.data[i] - hf.data[j]) / straight / 0.22))
+      // painted line at any distance. The pool is the churn left by whatever
+      // fell into this stretch's head, fading out along the first stretch.
+      const fall = fallOf.get(i) ?? 0
+      const pool = poolAt.get(i) ?? 0
 
       cx.length = 0
       cz.length = 0
@@ -304,10 +320,12 @@ export function Streams({ world }: { world: World }) {
         flow[(v + 2) * 2 + 1] = t1z
         flow[(v + 3) * 2] = t1x
         flow[(v + 3) * 2 + 1] = t1z
-        foam[v] = fall
-        foam[v + 1] = fall
-        foam[v + 2] = fall
-        foam[v + 3] = fall
+        const f0 = Math.max(fall, pool * Math.pow(1 - s0, 1.5))
+        const f1 = Math.max(fall, pool * Math.pow(1 - s1, 1.5))
+        foam[v] = f0
+        foam[v + 1] = f0
+        foam[v + 2] = f1
+        foam[v + 3] = f1
 
         idx[t] = v
         idx[t + 1] = v + 1
@@ -418,9 +436,14 @@ export function Streams({ world }: { world: World }) {
         ${CLOUD_SHADOW_GLSL}
         ${AIR_FOG_GLSL}
 
-        /** The sky's own gradient — the same two steps Sky.tsx and the lake use. */
-        vec3 skyTone(float up) {
-          vec3 s = mix(uSkyHorizon, uSkyTop, smoothstep(0.0, 0.55, up));
+        /**
+         * The sky's own gradient — the same two steps Sky.tsx and the lake
+         * use, with the lake's directional horizon: a river reflecting a warm
+         * sky glows on the sunward reach, exactly as the lake it feeds does.
+         */
+        vec3 skyTone(float up, vec2 az) {
+          vec3 h = mix(uSkyHorizon, airFogColor(normalize(vec3(az.x, 0.12, az.y))), 0.55);
+          vec3 s = mix(h, uSkyTop, smoothstep(0.0, 0.55, up));
           return mix(uFog, s, smoothstep(-0.03, 0.28, up));
         }
 
@@ -501,7 +524,7 @@ export function Streams({ world }: { world: World }) {
           vec3 nrm = normalize(vec3(-rx * 0.7, 1.0, -rz * 0.7));
           vec3 viewDir = normalize(cameraPosition - vWorld);
           vec3 refl = reflect(-viewDir, nrm);
-          vec3 skyCol = skyTone(mix(max(refl.y, 0.0), 0.8, 0.45));
+          vec3 skyCol = skyTone(mix(max(refl.y, 0.0), 0.8, 0.45), refl.xz);
           float fres = pow(1.0 - clamp(dot(nrm, viewDir), 0.0, 1.0), 4.0);
           // And a floor under the reflection. Fresnel is right for a lake seen
           // across its length — a grazing view is nearly all sky, which is
@@ -512,6 +535,13 @@ export function Streams({ world }: { world: World }) {
           // as everything around it.
           vec3 col = mix(body, skyCol, clamp(fres, 0.38, 0.55));
           col *= 0.96 + r0 * 0.08;
+
+          // Riffle and pool: a river alternates fast shallow water and slow
+          // deep reaches every hundred metres or so, and from the air the
+          // alternation arrives as brightness. Static by construction — it is
+          // the riverbed doing this, not the weather.
+          float along = dot(vWorld.xz, vFlow);
+          col *= 1.0 + sin(along * 0.05 + csNoise(vWorld.xz * 0.01) * 3.0) * 0.05;
 
           // Whitewater where it falls steeply, and a trace where it breaks along
           // the bank. The bank term is small: it used to be the loudest thing at
@@ -550,9 +580,12 @@ export function Streams({ world }: { world: World }) {
 
           // The same glitter the lake carries. Two surfaces of the same water on
           // the same map should catch the sun the same way, and without it a
-          // river stayed matte while the lake beside it sparkled.
+          // river stayed matte while the lake beside it sparkled. The road —
+          // the broad soft lobe the sparkle sits in — is what lets a whole
+          // reach light up when it happens to run toward the sun.
           vec3 hv = normalize(normalize(uSunDir) + viewDir);
           col += uSun * pow(max(dot(nrm, hv), 0.0), 180.0) * 0.7;
+          col += uSun * pow(max(dot(nrm, hv), 0.0), 18.0) * 0.15;
 
           col *= cloudShadow(vWorld.xz, uCloudWind, uTime, uCloudSeed);
           // The shared directional haze, so a distant river hazes to the same
