@@ -111,6 +111,9 @@ export function Trees({ world }: { world: World }) {
       mesh.instanceColor = new InstancedBufferAttribute(new Float32Array(cap * 3), 3)
       mesh.frustumCulled = false
       mesh.count = 0
+      // Costs nothing while the renderer's shadow map is off, so it is not
+      // gated: when shadows are on, the woods are most of what casts them.
+      mesh.castShadow = true
       return mesh
     }
 

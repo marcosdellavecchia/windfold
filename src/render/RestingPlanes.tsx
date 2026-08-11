@@ -66,6 +66,7 @@ export function RestingPlanes({ world, rests }: { world: World; rests: RestPoint
     const restMat = new MeshLambertMaterial({ vertexColors: true, side: 2 })
     patchAirFog(restMat)
     const mesh = new InstancedMesh(buildDart(), restMat, MAX)
+    mesh.castShadow = true
     mesh.instanceColor = new InstancedBufferAttribute(new Float32Array(MAX * 3), 3)
     mesh.frustumCulled = false
     mesh.count = 0

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import {
+  DirectionalLight,
   Group,
   MathUtils,
   Matrix4,
@@ -41,12 +42,15 @@ import { Trail } from './Trail'
 export function Scene({
   world,
   par,
+  shadows,
   onWorldReady,
   rests,
   onFlightRested,
 }: {
   world: World
   par: number
+  /** Whether the sun casts real shadows — the renderer's one quality setting. */
+  shadows?: boolean
   /** Fired on the first rendered frame of each world — the veil lifts on it. */
   onWorldReady?: () => void
   /** Where other players' flights came to rest, from the presence layer. */
@@ -73,11 +77,7 @@ export function Scene({
         groundColor={rgbToHex(pal.low)}
         intensity={0.75}
       />
-      <directionalLight
-        color={rgbToHex(pal.sunLight)}
-        intensity={2.1}
-        position={[world.sunDir.x * 3000, world.sunDir.y * 3000, world.sunDir.z * 3000]}
-      />
+      <SunLight world={world} planeRef={planeRef} shadows={shadows ?? false} />
 
       <Sky world={world} />
       <Terrain world={world} />
@@ -106,6 +106,89 @@ export function Scene({
     </>
   )
 }
+
+/** Half-extent of the shadow camera's box, metres. */
+const SHADOW_HALF = 1600
+const SHADOW_MAP = 2048
+
+/**
+ * The day's sun, and — on hardware that can afford it — its shadows.
+ *
+ * Every day in this game has a deliberately low sun, chosen "for long shadows
+ * and rim light", and then for a long time nothing cast one. This is the other
+ * half of that decision: at 9-24 degrees a 25 m spruce throws a shadow up to
+ * ten times its height, and a hillside of them is most of what a photograph of
+ * evening country *is*.
+ *
+ * The shadow camera cannot cover a 12 km map at any usable resolution, so its
+ * box rides along with the aircraft. Moving it naively makes every shadow edge
+ * crawl as it re-rasterises — so the box only ever moves in whole shadow-map
+ * texels, measured in the light's own plane. The world the map sees is then
+ * pixel-identical between frames until the box takes a discrete one-texel
+ * step, and the edges hold still.
+ */
+function SunLight({
+  world,
+  planeRef,
+  shadows,
+}: {
+  world: World
+  planeRef: React.RefObject<Group | null>
+  shadows: boolean
+}) {
+  const ref = useRef<DirectionalLight>(null)
+
+  // A fixed basis across the light's plane, for the texel snapping.
+  const basis = useMemo(() => {
+    const right = new Vector3(0, 1, 0).cross(world.sunDir).normalize()
+    const up = new Vector3().crossVectors(world.sunDir, right).normalize()
+    return { right, up }
+  }, [world])
+
+  useFrame(() => {
+    const l = ref.current
+    const p = planeRef.current
+    if (!l || !p) return
+    const texel = (2 * SHADOW_HALF) / SHADOW_MAP
+    const s = SNAP.copy(p.position)
+    const r = Math.round(s.dot(basis.right) / texel) * texel
+    const u = Math.round(s.dot(basis.up) / texel) * texel
+    const along = s.dot(world.sunDir)
+    s.copy(basis.right)
+      .multiplyScalar(r)
+      .addScaledVector(basis.up, u)
+      .addScaledVector(world.sunDir, along)
+    l.target.position.copy(s)
+    // The target is not in the scene graph, so its matrix is fed by hand.
+    l.target.updateMatrixWorld()
+    l.position.copy(s).addScaledVector(world.sunDir, 2600)
+  })
+
+  return (
+    <directionalLight
+      ref={ref}
+      color={rgbToHex(world.palette.sunLight)}
+      intensity={2.1}
+      position={[world.sunDir.x * 3000, world.sunDir.y * 3000, world.sunDir.z * 3000]}
+      castShadow={shadows}
+      shadow-mapSize-width={SHADOW_MAP}
+      shadow-mapSize-height={SHADOW_MAP}
+      shadow-camera-left={-SHADOW_HALF}
+      shadow-camera-right={SHADOW_HALF}
+      shadow-camera-top={SHADOW_HALF}
+      shadow-camera-bottom={-SHADOW_HALF}
+      shadow-camera-near={200}
+      shadow-camera-far={6000}
+      // Normal bias rather than depth bias does the acne-prevention here:
+      // the casters are cones and blobs on a rolling heightfield, and a
+      // couple of metres along the normal costs nothing anyone can see.
+      shadow-bias={-0.0002}
+      shadow-normalBias={2.5}
+    />
+  )
+}
+
+const SNAP = new Vector3()
 
 interface SimProps {
   world: World

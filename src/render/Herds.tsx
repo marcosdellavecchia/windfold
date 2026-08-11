@@ -113,6 +113,7 @@ export function Herds({ world, planeRef }: { world: World; planeRef: React.RefOb
     const mat = new MeshLambertMaterial({ vertexColors: true })
     patchAirFog(mat)
     const mesh = new InstancedMesh(herdGeometry(spec.kind), mat, MAX)
+    mesh.castShadow = true
     mesh.instanceColor = new InstancedBufferAttribute(new Float32Array(MAX * 3), 3)
     mesh.frustumCulled = false
     mesh.count = 0

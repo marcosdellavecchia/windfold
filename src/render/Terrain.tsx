@@ -92,7 +92,11 @@ export function Terrain({ world }: { world: World }) {
     material.userData.uCloudTime.value += Math.min(dt, 0.1)
   })
 
-  return <mesh geometry={geometry} material={material} frustumCulled={false} />
+  // receiveShadow only: the terrain casting onto itself would need a bias
+  // budget the low sun cannot afford (grazing light turns every slope into
+  // acne), and the ridge shadows it would buy are already painted into the
+  // vertex colours by aspect. The things standing *on* it are the casters.
+  return <mesh geometry={geometry} material={material} receiveShadow frustumCulled={false} />
 }
 
 /**

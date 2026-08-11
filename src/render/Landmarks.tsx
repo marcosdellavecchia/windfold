@@ -117,7 +117,9 @@ function Lighthouse({ world }: { world: World }) {
       color: rgbToHex(mix(pal.sand, WHITE, 0.55)),
     })
     patchAirFog(bodyMat)
-    g.add(new Mesh(body, bodyMat))
+    const bodyMesh = new Mesh(body, bodyMat)
+    bodyMesh.castShadow = true
+    g.add(bodyMesh)
 
     // The lamp itself: unlit material, so it stays bright inside the tower's own
     // shadow side. It is the one point of the structure meant to be seen first.
@@ -323,7 +325,9 @@ function lambertGroup(parts: Array<{ geo: BufferGeometry; tint: number }>, color
   const mat = new MeshLambertMaterial({ vertexColors: true, color })
   patchAirFog(mat)
   const g = new Group()
-  g.add(new Mesh(geo, mat))
+  const m = new Mesh(geo, mat)
+  m.castShadow = true
+  g.add(m)
   return {
     group: g,
     dispose: () => {

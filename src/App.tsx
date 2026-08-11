@@ -191,10 +191,22 @@ export default function App() {
 
   useEffect(() => attachInput(), [])
 
+  // Cast sun shadows — the one real GPU cost in the renderer, so it is a
+  // quality setting rather than a fact: on for anything with a mouse, off for
+  // touch devices (the cheapest usable phone heuristic), and ?shadows=0|1
+  // overrides either way for testing and for anyone whose hardware disagrees
+  // with the guess.
+  const shadowsOn = useMemo(() => {
+    const p = new URLSearchParams(window.location.search).get('shadows')
+    if (p !== null) return p !== '0'
+    return window.matchMedia('(pointer: fine)').matches
+  }, [])
+
   return (
     <>
       <Canvas
         flat
+        shadows={shadowsOn ? 'soft' : false}
         dpr={[1, 1.75]}
         gl={{ antialias: true, powerPreference: 'high-performance' }}
         // near 1.2, not 0.5: depth precision scales with the near plane, and the
@@ -205,6 +217,7 @@ export default function App() {
         <Scene
           world={world}
           par={par}
+          shadows={shadowsOn}
           onWorldReady={onWorldReady}
           rests={presence?.rests ?? null}
           onFlightRested={onFlightRested}
