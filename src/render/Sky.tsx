@@ -199,55 +199,76 @@ export function Sky({ world }: { world: World }) {
           vec2 mo = vec2(dot(d, mr), dot(d, mu));
           float mFront = step(0.0, dot(d, md));
           float mr2 = length(mo);
-          float moon = (1.0 - smoothstep(0.016, 0.021, mr2)) * mFront;
-          // Phase is a second disc subtracted off the first, offset sideways. Crude,
-          // and indistinguishable from the real thing at this size.
-          float dark = 1.0 - smoothstep(0.013, 0.020, length(mo - vec2(uMoonPhase * 0.026, 0.0)));
-          float lit = moon * (1.0 - dark * 0.94);
-          float shadowed = moon * dark;
+          float MOON_R = 0.017;
+          float moon = (1.0 - smoothstep(MOON_R * 0.93, MOON_R, mr2)) * mFront;
+          // The phase used to be a second disc subtracted off the first, offset
+          // horizontally — which put a circular bite in the limb with a
+          // terminator that never pointed anywhere. A moon is a sphere: build
+          // the surface normal at each pixel and light it, with the light
+          // tipped around the disc by the day's phase and *aimed at the actual
+          // sun* — the lit limb of a real moon always faces the sun in the sky,
+          // and the eye knows it even when it has never been told.
+          float nz = sqrt(max(1.0 - (mr2 * mr2) / (MOON_R * MOON_R), 0.0));
+          vec3 mnrm = vec3(mo / MOON_R, nz);
+          vec2 sunProj = normalize(vec2(dot(sd, mr), dot(sd, mu)) + vec2(1e-5));
+          // 0 is full; the sign says which limb carries the light. 2.4 rad at
+          // the extreme is a deep crescent without ever going fully new — a
+          // new moon is an invisible moon, which is a wasted draw.
+          float phi = uMoonPhase * 2.4;
+          vec3 mlight = normalize(vec3(sunProj * sin(phi), cos(phi)));
+          float mdot = dot(mnrm, mlight);
+          // Terminator softness: real lunar shadow has a soft edge at this
+          // scale from the terrain along it.
+          float litMask = smoothstep(-0.03, 0.14, mdot);
           // Maria: the same value noise as everything else, twice, which is all a
           // disc a degree wide can carry — but a blank moon reads as a hole punch
           // and a mottled one reads as the moon.
           float mare = vnoise(mo * 260.0 + uSeed * 9.0) * 0.6 + vnoise(mo * 560.0 - uSeed * 4.0) * 0.4;
           vec3 moonCol = mix(vec3(1.0), uGlow, 0.3) * (1.0 - mare * 0.22);
           // Limb darkening, so the disc has a far side.
-          moonCol *= 1.0 - smoothstep(0.011, 0.020, mr2) * 0.28;
-          sky = mix(sky, moonCol, lit * 0.75);
+          moonCol *= 1.0 - smoothstep(MOON_R * 0.65, MOON_R, mr2) * 0.28;
+          // Flattened lambert: regolith is retroreflective, so the fall toward
+          // the terminator is late and steep rather than a smooth gradient.
+          float mshade = 0.62 + 0.38 * pow(clamp(mdot, 0.0, 1.0), 0.45);
+          sky = mix(sky, moonCol * mshade, moon * litMask * 0.8);
           // Earthshine: the dark side is never black, it is the ghost of the disc
           // lit by somewhere else entirely. Cool, because the shadow of a world
           // should not be warm.
-          sky = mix(sky, mix(uTop, vec3(1.0), 0.3), shadowed * 0.14);
-          sky += moonCol * exp(-mr2 * 42.0) * 0.05 * mFront;
-          // Lunar corona: one tight iridescent ring hugging the disc.
+          sky = mix(sky, mix(uTop, vec3(1.0), 0.3), moon * (1.0 - litMask) * 0.13);
+          // The glow scales with how much of the disc is actually lit — a
+          // crescent does not flood the sky the way a full moon does.
+          float litFrac = cos(phi) * 0.5 + 0.5;
+          sky += moonCol * exp(-mr2 * 46.0) * 0.05 * mFront * (0.25 + 0.75 * litFrac);
+          // Lunar corona: one tight iridescent ring hugging the disc, faint.
           float mringT = (mr2 - 0.031) * 95.0;
-          sky += mix(uGlow, uCirrus, 0.55) * exp(-mringT * mringT) * 0.045 * mFront;
+          sky += mix(uGlow, uCirrus, 0.55) * exp(-mringT * mringT) * 0.032 * mFront * (0.25 + 0.75 * litFrac);
 
           // --- sun ----------------------------------------------------------
           vec3 sr, su;
           basis(sd, sr, su);
           vec2 off = vec2(dot(d, sr), dot(d, su));
           float sFront = step(0.0, dot(d, sd));
-          // Refraction flattens a low sun into an oval. Exaggerated past what the
-          // atmosphere actually does, because a slightly wrong sun is the detail
-          // that tells you where you are is not quite real.
-          float squash = 1.0 + 1.8 * (1.0 - sd.y);
+          // Refraction flattens a low sun into an oval — kept at roughly what
+          // the atmosphere actually does. The old exaggeration (and the mirage
+          // notch that went with it) made the disc a *shape*, and a sun you can
+          // see the shape of is a sticker; a real one is a hole burned in the
+          // frame that the eye cannot hold.
+          float squash = 1.0 + 0.3 * (1.0 - sd.y);
           vec2 so = vec2(off.x, off.y * squash);
-          // And it never sits still — heat haze, breathing slowly.
-          so *= 1.0 + 0.05 * sin(uTime * 0.7 + so.y * 90.0 + uSeed);
+          // Heat shimmer, barely: enough that it is not frozen, never enough
+          // to wobble visibly.
+          so *= 1.0 + 0.018 * sin(uTime * 0.7 + so.y * 90.0 + uSeed);
           float r = length(so);
 
-          float disc = (1.0 - smoothstep(0.013, 0.023, r)) * sFront;
-          // The mirage notch a low sun gets cut by over a horizon.
-          float notch = 1.0 - smoothstep(0.0, 0.004, abs(so.y + 0.007));
-          disc *= 1.0 - 0.4 * notch * (1.0 - sd.y);
-          // Hot at the core, the day's colour at the limb. A flat disc reads as a
-          // sticker; two stops of limb gradient read as something burning.
-          vec3 sunDisc = mix(mix(uSun, vec3(1.0), 0.65), uSun, smoothstep(0.004, 0.020, r));
-          sky += sunDisc * disc * 1.25;
-
-          // Halo. With tone mapping off a wide bloom clips straight to white and
-          // swallows a third of the sky, so both falloffs are tight.
-          sky += uSun * exp(-r * 26.0) * 0.20 * sFront;
+          // Overexposed: a camera pointed at the sun clips, so the core is
+          // white by definition — the day's colour lives in the glare around
+          // it, not in the disc. Three falloff scales stand in for the bloom a
+          // real lens would produce; the widest is faint enough not to swallow
+          // the sky, which with tone mapping off it happily would.
+          float disc = (1.0 - smoothstep(0.009, 0.015, r)) * sFront;
+          sky += mix(vec3(1.0), uSun, 0.1) * disc * 1.6;
+          sky += mix(uSun, vec3(1.0), 0.45) * exp(-r * 55.0) * 0.55 * sFront;
+          sky += uSun * exp(-r * 18.0) * 0.22 * sFront;
           sky += uSun * exp(-r * 4.5) * 0.07 * sFront;
 
           // The ice halo: the 22-degree ring, shrunk to fit the frame and tinted

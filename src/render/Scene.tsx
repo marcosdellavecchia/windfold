@@ -31,6 +31,7 @@ import { Birds } from './Birds'
 import { Herds } from './Herds'
 import { Landmarks } from './Landmarks'
 import { Motes } from './Motes'
+import { LensFlare } from './LensFlare'
 import { FOG_DENSITY, updateAirFog } from './atmosphere'
 import { Sky } from './Sky'
 import { Thermals } from './Thermals'
@@ -90,6 +91,7 @@ export function Scene({
       <Landmarks world={world} />
       <RestingPlanes world={world} rests={rests ?? null} />
       <Motes world={world} />
+      <LensFlare world={world} />
       <primitive object={trail.object} />
       <PaperPlane ref={planeRef} world={world} />
 
