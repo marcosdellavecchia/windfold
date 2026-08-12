@@ -92,11 +92,14 @@ export function Terrain({ world }: { world: World }) {
     material.userData.uCloudTime.value += Math.min(dt, 0.1)
   })
 
-  // receiveShadow only: the terrain casting onto itself would need a bias
-  // budget the low sun cannot afford (grazing light turns every slope into
-  // acne), and the ridge shadows it would buy are already painted into the
-  // vertex colours by aspect. The things standing *on* it are the casters.
-  return <mesh geometry={geometry} material={material} receiveShadow frustumCulled={false} />
+  // The terrain casts as well as receives, and not for its own ridge shadows
+  // (the aspect tint already paints those): it is the light's occluder. With
+  // the ground absent from the shadow map, a tree standing behind a ridge
+  // threw its shadow *through the hill* onto the slope facing the player — a
+  // floating shadow with no owner, reported twice before the cause was found.
+  // The acne this risks at grazing sun is bought off with normal bias on the
+  // light, which 32 m cells tolerate better than fine geometry would.
+  return <mesh geometry={geometry} material={material} castShadow receiveShadow frustumCulled={false} />
 }
 
 /**

@@ -179,11 +179,14 @@ function SunLight({
       shadow-camera-bottom={-SHADOW_HALF}
       shadow-camera-near={200}
       shadow-camera-far={6000}
-      // Normal bias rather than depth bias does the acne-prevention here:
-      // the casters are cones and blobs on a rolling heightfield, and a
-      // couple of metres along the normal costs nothing anyone can see.
-      shadow-bias={-0.0002}
-      shadow-normalBias={2.5}
+      // Normal bias rather than depth bias does the acne-prevention here.
+      // Sized for the terrain, which self-shadows at grazing sun: five metres
+      // along the normal of a 32 m cell is invisible from a glider, and it is
+      // what lets the ground be in the shadow map at a nine-degree sun at all.
+      // (A pale mottle on shaded alpine slopes was chased as acne and turned
+      // out to be the scree paint — at this bias none has actually been seen.)
+      shadow-bias={-0.0005}
+      shadow-normalBias={5}
     />
   )
 }
