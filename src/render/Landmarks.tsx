@@ -82,12 +82,18 @@ const SINK = 2.5
 
 /* ---------------------------------------------------------------- lighthouse */
 
-/** Tall enough to clear the headland scrub, small enough to stay believable. */
-const LH_TOWER = 22
-const LH_PLINTH = 4
+/**
+ * Monument scale, not building scale. The first tower was 26 m — believable,
+ * and exactly the height of the trees beside it, which made the day's one
+ * landmark another item in the scatter. Everything oversized in this game is
+ * oversized for the same reason (the reeds say it best: true scale vanishes
+ * from a glider), and the landmark is the thing the whole map gets named by.
+ */
+const LH_TOWER = 52
+const LH_PLINTH = 7
 /** Sweep rate, rad/s. A full pass every ~11 s — patient, like the real thing. */
 const LH_SWEEP = 0.55
-const BEAM_LEN = 260
+const BEAM_LEN = 420
 
 function Lighthouse({ world }: { world: World }) {
   const { group, beam, dispose } = useMemo(() => {
@@ -100,15 +106,15 @@ function Lighthouse({ world }: { world: World }) {
     // dark rings are what make it a lighthouse rather than a grain silo.
     const galleryY = LH_PLINTH + LH_TOWER
     const body = merge([
-      { geo: translated(new CylinderGeometry(5.2, 6.0, LH_PLINTH, 8), 0, LH_PLINTH / 2, 0), tint: 0.55 },
-      { geo: translated(new CylinderGeometry(2.3, 3.3, LH_TOWER, 10), 0, LH_PLINTH + LH_TOWER / 2, 0), tint: 1.0 },
+      { geo: translated(new CylinderGeometry(9.5, 11, LH_PLINTH, 8), 0, LH_PLINTH / 2, 0), tint: 0.55 },
+      { geo: translated(new CylinderGeometry(4.2, 6.4, LH_TOWER, 10), 0, LH_PLINTH + LH_TOWER / 2, 0), tint: 1.0 },
       // Two contrast bands, slightly proud of the taper so they never z-fight.
-      { geo: translated(new CylinderGeometry(3.02, 3.14, 2.6, 10), 0, LH_PLINTH + LH_TOWER * 0.22, 0), tint: 0.42 },
-      { geo: translated(new CylinderGeometry(2.62, 2.74, 2.6, 10), 0, LH_PLINTH + LH_TOWER * 0.6, 0), tint: 0.42 },
+      { geo: translated(new CylinderGeometry(6.06, 6.3, 4.8, 10), 0, LH_PLINTH + LH_TOWER * 0.22, 0), tint: 0.42 },
+      { geo: translated(new CylinderGeometry(5.22, 5.46, 4.8, 10), 0, LH_PLINTH + LH_TOWER * 0.6, 0), tint: 0.42 },
       // Gallery deck, lantern room, roof cone.
-      { geo: translated(new CylinderGeometry(3.4, 3.4, 1.0, 10), 0, galleryY + 0.5, 0), tint: 0.4 },
-      { geo: translated(new CylinderGeometry(1.9, 1.9, 2.8, 8), 0, galleryY + 2.4, 0), tint: 1.1 },
-      { geo: translated(new ConeGeometry(2.4, 2.6, 8), 0, galleryY + 5.1, 0), tint: 0.38 },
+      { geo: translated(new CylinderGeometry(6.6, 6.6, 1.8, 10), 0, galleryY + 0.9, 0), tint: 0.4 },
+      { geo: translated(new CylinderGeometry(3.6, 3.6, 5.2, 8), 0, galleryY + 4.4, 0), tint: 1.1 },
+      { geo: translated(new ConeGeometry(4.6, 5.0, 8), 0, galleryY + 9.4, 0), tint: 0.38 },
     ])
     // Whitewashed masonry, but in the day's light — off the shore band rather
     // than a literal white, so a dusky grade dims the tower with everything else.
@@ -123,10 +129,10 @@ function Lighthouse({ world }: { world: World }) {
 
     // The lamp itself: unlit material, so it stays bright inside the tower's own
     // shadow side. It is the one point of the structure meant to be seen first.
-    const lampGeo = new IcosahedronGeometry(1.5, 0)
+    const lampGeo = new IcosahedronGeometry(2.9, 0)
     const lampMat = new MeshBasicMaterial({ color: rgbToHex(mix(pal.sun, WHITE, 0.5)) })
     const lamp = new Mesh(lampGeo, lampMat)
-    lamp.position.y = galleryY + 2.4
+    lamp.position.y = galleryY + 4.4
     g.add(lamp)
 
     // The sweep: two opposed blades of additive light. Additive and fog-exempt
@@ -134,8 +140,8 @@ function Lighthouse({ world }: { world: World }) {
     // which brightens an additive surface instead of hiding it, so the beam
     // simply stays subtle enough to live without a fade.
     const beam = new Group()
-    beam.position.y = galleryY + 2.4
-    const beamGeo = new PlaneGeometry(BEAM_LEN, 2.2)
+    beam.position.y = galleryY + 4.4
+    const beamGeo = new PlaneGeometry(BEAM_LEN, 4.0)
     const beamMat = new MeshBasicMaterial({
       color: rgbToHex(mix(pal.sun, WHITE, 0.6)),
       transparent: true,
@@ -343,16 +349,17 @@ function lambertGroup(parts: Array<{ geo: BufferGeometry; tint: number }>, color
  * is. It is the prize for getting there: the highest point of the day's map,
  * exactly, same scan as the vent.
  */
-function buildCross(world: World) {
+export function buildCross(world: World) {
   const lm = world.landmark
   const pal = world.palette
-  // Oversized against a real summit cross (~3 m), because at this game's
-  // flying distances a true-scale one would be sub-pixel from anywhere.
+  // Far past a real summit cross (~3 m): at this game's flying distances a
+  // true-scale one is sub-pixel from anywhere, and after the size pass this is
+  // a monument you plan a leg around — more Aconcagua's cross by way of Rio.
   const built = lambertGroup(
     [
-      { geo: translated(scaled(new IcosahedronGeometry(2.6, 0), 1.25, 0.55, 1.25), 0, 0.9, 0), tint: 1.0 },
-      { geo: translated(new BoxGeometry(0.6, 8.5, 0.6), 0, 5.4, 0), tint: 0.34 },
-      { geo: translated(new BoxGeometry(4.2, 0.6, 0.6), 0, 7.9, 0), tint: 0.34 },
+      { geo: translated(scaled(new IcosahedronGeometry(5.4, 0), 1.25, 0.55, 1.25), 0, 1.9, 0), tint: 1.0 },
+      { geo: translated(new BoxGeometry(1.3, 19, 1.3), 0, 11.5, 0), tint: 0.34 },
+      { geo: translated(new BoxGeometry(9.4, 1.3, 1.3), 0, 17.2, 0), tint: 0.34 },
     ],
     // Cairn in the summit's own rock; the dark tint turns the cross to timber.
     rgbToHex(mix(pal.rock, pal.mineral, 0.35)),
@@ -362,11 +369,12 @@ function buildCross(world: World) {
 }
 
 /**
- * Mesa: a freestanding rock arch. The opening is ~11 m wide and ~13 m clear —
+ * Mesa: a freestanding rock arch. The opening is ~25 m wide and ~28 m clear —
  * a paper plane fits through with room to be brave about it, which is the
- * point: this is the one landmark that is a stunt as much as a place.
+ * point: this is the one landmark that is a stunt as much as a place, and at
+ * monument scale the stunt is visible from the launch ridge.
  */
-function buildArch(world: World) {
+export function buildArch(world: World) {
   const lm = world.landmark
   const pal = world.palette
   const built = lambertGroup(
@@ -374,31 +382,33 @@ function buildArch(world: World) {
       // Tapered five-sided pillars leaning into each other — boxes read as a
       // built gate, and this is supposed to be something the wind made. The
       // lintel's own tilt keeps the top from reading as a machined beam.
-      { geo: translated(rotatedZ(new CylinderGeometry(2.0, 3.6, 17, 5), -0.1), -8, 8.2, 0), tint: 1.0 },
-      { geo: translated(rotatedZ(new CylinderGeometry(2.0, 3.6, 17, 5), 0.1), 8, 8.2, 0), tint: 0.94 },
-      { geo: translated(rotatedZ(scaled(new IcosahedronGeometry(5.2, 0), 2.1, 0.5, 0.95), 0.05), 0, 16.4, 0), tint: 0.88 },
+      { geo: translated(rotatedZ(new CylinderGeometry(4.4, 8.0, 37, 5), -0.1), -17.5, 18, 0), tint: 1.0 },
+      { geo: translated(rotatedZ(new CylinderGeometry(4.4, 8.0, 37, 5), 0.1), 17.5, 18, 0), tint: 0.94 },
+      { geo: translated(rotatedZ(scaled(new IcosahedronGeometry(11.4, 0), 2.1, 0.5, 0.95), 0.05), 0, 36, 0), tint: 0.88 },
       // Rubble at the feet, so the arch grows out of the ground it stands on.
-      { geo: translated(scaled(new IcosahedronGeometry(2.2, 0), 1.1, 0.7, 1.0), -9.5, 0.8, 1.2), tint: 0.9 },
-      { geo: translated(scaled(new IcosahedronGeometry(1.7, 0), 1.0, 0.65, 1.2), 9.8, 0.6, -1.0), tint: 0.95 },
+      { geo: translated(scaled(new IcosahedronGeometry(4.8, 0), 1.1, 0.7, 1.0), -21, 1.7, 2.6), tint: 0.9 },
+      { geo: translated(scaled(new IcosahedronGeometry(3.7, 0), 1.0, 0.65, 1.2), 21.5, 1.3, -2.2), tint: 0.95 },
     ],
     // The mesa's own strata, pulled hard toward the sand band: the terrain's
     // rock colour alone proved near-black out here against sunlit ground.
     rgbToHex(mix(pal.rock, pal.sand, 0.55)),
   )
-  built.group.position.set(lm.x, meshHeight(world.heightfield, lm.x, lm.z) - SINK, lm.z)
+  built.group.position.set(lm.x, meshHeight(world.heightfield, lm.x, lm.z) - SINK - 1.5, lm.z)
   built.group.rotation.y = lm.heading ?? 0
   return built
 }
 
-/** Deck length. Two terrain cells: enough to clear the widest drawn river. */
-const BRIDGE_SPAN = 64
+/** Deck length. Three terrain cells: a viaduct, not a footbridge. */
+const BRIDGE_SPAN = 96
 
 /**
- * Valley: a stone bridge over the day's river. The site and the yaw come from
- * the drainage tree (sim/landmark.ts); here the deck is set just above the
- * higher bank and the piers drop to whatever ground is actually under them.
+ * Valley: a stone viaduct over the day's river. The site and the yaw come from
+ * the drainage tree (sim/landmark.ts); here the deck rides well above the
+ * higher bank and the piers drop to whatever ground is actually under them —
+ * the height is the grandeur, and it costs nothing, because the piers already
+ * size themselves to reach the ground.
  */
-function buildBridge(world: World) {
+export function buildBridge(world: World) {
   const lm = world.landmark
   const pal = world.palette
   const hf = world.heightfield
@@ -407,25 +417,26 @@ function buildBridge(world: World) {
   const ux = Math.cos(heading)
   const uz = -Math.sin(heading)
   const groundAt = (px: number) => meshHeight(hf, lm.x + ux * px, lm.z + uz * px)
-  const deckY = Math.max(groundAt(-BRIDGE_SPAN / 2), groundAt(BRIDGE_SPAN / 2), lm.y + 4) + 1.6
+  const deckY = Math.max(groundAt(-BRIDGE_SPAN / 2), groundAt(BRIDGE_SPAN / 2), lm.y + 4) + 10
 
   const parts: Array<{ geo: BufferGeometry; tint: number }> = [
     // Deck runs a little past the span so the ends bury into the banks.
-    { geo: translated(new BoxGeometry(BRIDGE_SPAN + 8, 1.8, 7), 0, -0.9, 0), tint: 1.0 },
-    { geo: translated(new BoxGeometry(BRIDGE_SPAN + 8, 1.3, 0.9), 0, 0.65, 3.1), tint: 0.8 },
-    { geo: translated(new BoxGeometry(BRIDGE_SPAN + 8, 1.3, 0.9), 0, 0.65, -3.1), tint: 0.8 },
+    { geo: translated(new BoxGeometry(BRIDGE_SPAN + 12, 2.6, 9), 0, -1.3, 0), tint: 1.0 },
+    { geo: translated(new BoxGeometry(BRIDGE_SPAN + 12, 2.0, 1.2), 0, 1.0, 4.0), tint: 0.8 },
+    { geo: translated(new BoxGeometry(BRIDGE_SPAN + 12, 2.0, 1.2), 0, 1.0, -4.0), tint: 0.8 },
   ]
   // Piers wherever they are needed, sized to the ground under each one — the
-  // middle one usually stands in the river, which is what sells the bridge,
-  // and the outermost pair carries the deck across whichever bank sits lower
-  // than the other (the deck is level with the higher one, so without them
-  // the low end floats).
-  for (const px of [-28, -14, 0, 14, 28]) {
+  // middle one usually stands in the river, which is what sells the bridge.
+  // Seven of them, out to the very ends: the old low deck could bury its ends
+  // in the banks, but a deck riding ten metres above them cannot, and a
+  // viaduct with floating approaches is a bug with masonry on it. The evenly
+  // spaced legs are also simply what a viaduct looks like.
+  for (const px of [-50, -33.3, -16.7, 0, 16.7, 33.3, 50]) {
     const bottom = groundAt(px) - SINK - deckY
     // Never shorter than a stub: on a bank that bulges above the deck line the
     // pier just buries itself, which is invisible and correct.
     const h = Math.max(-bottom - 1.5, 2)
-    parts.push({ geo: translated(new BoxGeometry(3.2, h, 5.4), px, -1.5 - h / 2, 0), tint: 0.68 })
+    parts.push({ geo: translated(new BoxGeometry(4.4, h, 7), px, -2.6 - h / 2, 0), tint: 0.68 })
   }
 
   // Pulled toward the sand band like the arch: the valley's raw rock colour
@@ -441,7 +452,7 @@ function buildBridge(world: World) {
  * deck just proud of the swell. Sited a couple of metres under the waterline
  * (sim/landmark.ts), so the hull sits *in* the sea rather than on a beach.
  */
-function buildWreck(world: World) {
+export function buildWreck(world: World) {
   const lm = world.landmark
   const pal = world.palette
   const hf = world.heightfield
@@ -449,18 +460,18 @@ function buildWreck(world: World) {
   const LIST = 0.24
   const built = lambertGroup(
     [
-      { geo: translated(rotatedX(rotatedZ(new BoxGeometry(15, 3.2, 4.6), 0.05), LIST), 0, 0.7, 0), tint: 1.0 },
-      { geo: translated(rotatedX(new BoxGeometry(3.6, 2.2, 4.2), LIST), -5.9, 2.4, 0.3), tint: 0.85 },
+      { geo: translated(rotatedX(rotatedZ(new BoxGeometry(36, 7, 10.5), 0.05), LIST), 0, 1.6, 0), tint: 1.0 },
+      { geo: translated(rotatedX(new BoxGeometry(8.6, 5.2, 9.6), LIST), -14, 5.6, 0.7), tint: 0.85 },
       // The mast leans with the list and then some — a wreck, not a mooring.
-      { geo: translated(rotatedZ(new CylinderGeometry(0.2, 0.32, 11, 5), 0.4), 1.8, 5.2, 0.9), tint: 0.7 },
-      { geo: translated(rotatedZ(new BoxGeometry(6, 0.45, 0.45), 0.4), 0.6, 6.6, 0.9), tint: 0.62 },
+      { geo: translated(rotatedZ(new CylinderGeometry(0.5, 0.8, 26, 5), 0.4), 4.3, 12.4, 2.1), tint: 0.7 },
+      { geo: translated(rotatedZ(new BoxGeometry(14, 1.0, 1.0), 0.4), 1.4, 15.6, 2.1), tint: 0.62 },
     ],
     // Weathered timber: driftwood grey, well below the palette's own bands.
     rgbToHex(scale(mix(pal.rock, pal.sand, 0.4), 0.55)),
   )
   // On the water, not on the seabed — but never floating over dry land if the
-  // fallback ever strands the site ashore.
-  const base = Math.min(hf.waterLevel - 0.6, meshHeight(hf, lm.x, lm.z) + 2.2)
+  // fallback ever strands the site ashore. A hull this size sits deeper.
+  const base = Math.min(hf.waterLevel - 1.6, meshHeight(hf, lm.x, lm.z) + 2.2)
   built.group.position.set(lm.x, base, lm.z)
   built.group.rotation.y = lm.heading ?? 0
   return built

@@ -1,0 +1,49 @@
+<!doctype html>
+<!-- Temporary dev harness: renders the day's landmark builder up close.
+     ?world=N picks the day. Not part of the game; delete freely. -->
+<html><body style="margin:0"><script type="module">
+import { WebGLRenderer, PerspectiveCamera, Scene, DirectionalLight, AmbientLight, Color, Mesh, PlaneGeometry, MeshLambertMaterial } from 'three'
+import { buildWorld } from '/src/sim/world'
+import { updateAirFog } from '/src/render/atmosphere'
+import { buildCross, buildArch, buildBridge, buildWreck } from '/src/render/Landmarks'
+import { meshHeight } from '/src/sim/terrain'
+
+const day = Number(new URLSearchParams(location.search).get('world') ?? 248)
+const world = buildWorld(day)
+updateAirFog(world)
+const builders = { cross: buildCross, arch: buildArch, bridge: buildBridge, wreck: buildWreck }
+const build = builders[world.landmark.kind]
+if (!build) throw new Error('kind not in harness: ' + world.landmark.kind)
+
+const scene = new Scene()
+scene.background = new Color(0x9fb4c8)
+const { group } = build(world)
+scene.add(group)
+const lm = world.landmark
+// A ground slab at the site's height, so pier/base contact is judgeable.
+const gy = meshHeight(world.heightfield, lm.x, lm.z)
+const slab = new Mesh(new PlaneGeometry(400, 400), new MeshLambertMaterial({ color: 0x6b7a5e }))
+slab.rotation.x = -Math.PI / 2
+slab.position.set(lm.x, gy, lm.z)
+slab.receiveShadow = true
+scene.add(slab)
+
+const sun = new DirectionalLight(0xfff2dd, 2.0)
+sun.position.set(lm.x + 300, gy + 200, lm.z + 150)
+sun.target.position.set(lm.x, gy, lm.z)
+sun.castShadow = true
+Object.assign(sun.shadow.camera, { left: -150, right: 150, top: 150, bottom: -150, near: 10, far: 900 })
+scene.add(sun, sun.target)
+scene.add(new AmbientLight(0xbfd0e0, 0.8))
+
+const camera = new PerspectiveCamera(55, innerWidth / innerHeight, 1, 5000)
+camera.position.set(lm.x + 130, gy + 55, lm.z + 95)
+camera.lookAt(lm.x, gy + 22, lm.z)
+
+const r = new WebGLRenderer({ antialias: true })
+r.shadowMap.enabled = true
+r.setSize(innerWidth, innerHeight)
+document.body.appendChild(r.domElement)
+r.render(scene, camera)
+document.title = 'landmark:' + world.landmark.kind
+</script></body></html>
