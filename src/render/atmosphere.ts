@@ -46,9 +46,15 @@ export const CLOUD_SHADOW_GLSL = /* glsl */ `
   float cloudShadow(vec2 xz, vec2 wind, float t, float seed) {
     // Two octaves at cumulus scale. The field drifts downwind a touch faster
     // than the air so the motion is perceptible from a moving aircraft.
-    vec2 p = (xz - wind * (t * 1.6)) * (1.0 / 950.0) + seed;
-    float n = csNoise(p) * 0.65 + csNoise(p * 2.7 + 13.1) * 0.35;
-    return 1.0 - smoothstep(0.52, 0.8, n) * 0.16;
+    //
+    // Broader and softer than it used to be, for a reason that only existed
+    // once real shadows did: the old threshold pinched off small crisp
+    // islands of shade, and a tree-sized dark blob on an open slope reads as
+    // a tree's shadow with no tree — reported as exactly that. At this scale
+    // and softness a patch can only be read as a cloud.
+    vec2 p = (xz - wind * (t * 1.6)) * (1.0 / 1350.0) + seed;
+    float n = csNoise(p) * 0.7 + csNoise(p * 2.3 + 13.1) * 0.3;
+    return 1.0 - smoothstep(0.48, 0.92, n) * 0.14;
   }
 `
 
