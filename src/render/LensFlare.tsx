@@ -13,6 +13,7 @@ import {
 import type { World } from '../sim/world'
 import { rgbToHex } from '../sim/palette'
 import { surfaceHeight } from '../sim/terrain'
+import { TONEMAP_GLSL } from './grade'
 
 /**
  * The camera admitting it is a camera.
@@ -123,6 +124,7 @@ export function LensFlare({ world }: { world: World }) {
 
           col *= uIntensity;
           gl_FragColor = vec4(col, 1.0);
+          ${TONEMAP_GLSL}
         }
       `,
     })

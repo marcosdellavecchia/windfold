@@ -4,6 +4,7 @@ import { AdditiveBlending, BufferAttribute, BufferGeometry, Color, Points, Shade
 import type { World } from '../sim/world'
 import { rgbToHex } from '../sim/palette'
 import { mulberry32 } from '../sim/rng'
+import { TONEMAP_GLSL } from './grade'
 
 const PER_COLUMN = 55
 /** How far up the column the dust is drawn, in metres. See the note in useFrame. */
@@ -107,6 +108,7 @@ export function Thermals({ world }: { world: World }) {
           float a = t * t * t;
           if (a <= 0.0 || vFade <= 0.0) discard;
           gl_FragColor = vec4(uColor, a * uOpacity * vFade);
+          ${TONEMAP_GLSL}
         }
       `,
     })

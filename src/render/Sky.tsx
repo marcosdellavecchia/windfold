@@ -4,6 +4,7 @@ import { BackSide, Color, Mesh, ShaderMaterial, Vector2, Vector3 } from 'three'
 import type { World } from '../sim/world'
 import { rgbToHex } from '../sim/palette'
 import { AIR_FOG_GLSL, AIR_FOG_UNIFORMS } from './atmosphere'
+import { TONEMAP_GLSL } from './grade'
 
 /**
  * Gradient dome with a soft sun bloom. A shader rather than a texture keeps the
@@ -297,6 +298,7 @@ export function Sky({ world }: { world: World }) {
           sky += (hash21(gl_FragCoord.xy) - 0.5) * 0.004;
 
           gl_FragColor = vec4(sky, 1.0);
+          ${TONEMAP_GLSL}
         }
       `,
     })

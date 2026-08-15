@@ -4,6 +4,7 @@ import type { World } from '../sim/world'
 import { recordOf, savedState } from '../game/persist'
 import { copyCard, shareCard } from '../game/share'
 import { callsign, rerollCallsign, setCallsign } from '../game/callsign'
+import { percentileOf } from '../game/standing'
 
 const metres = (v: number) => Math.round(v).toLocaleString('en-US')
 
@@ -11,8 +12,20 @@ const metres = (v: number) => Math.round(v).toLocaleString('en-US')
 const kmFlown = (m: number) =>
   m < 10000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m / 1000).toLocaleString('en-US')} km`
 
-export function Hud({ world, par, metresFlown }: { world: World; par: number; metresFlown: number }) {
+export function Hud({
+  world,
+  par,
+  metresFlown,
+  pool,
+}: {
+  world: World
+  par: number
+  metresFlown: number
+  /** Today's other flights, sorted, for the standing line. */
+  pool: number[]
+}) {
   const s = useHud()
+  const pct = percentileOf(s.best, pool)
 
   return (
     <div className="hud">
@@ -25,6 +38,21 @@ export function Hud({ world, par, metresFlown }: { world: World; par: number; me
         and what keeps the thing you are flying at legible.
       */}
       <div className={`speedRush${s.turbo ? ' on' : ''}`} />
+
+      {/*
+        The diorama. A tilt-shift band — sharp across the middle, blurred toward
+        the top and bottom of the frame — which is the one optical trick that
+        makes a landscape read as a model of itself, and a model is exactly what
+        the ready screen is: a place being *looked at* rather than flown.
+        Mounted only when the plane is not flying, so the cost is not "small in
+        flight", it is absent. It also fades in rather than out on purpose: the
+        world snapping into focus at the moment of launch is the right beat, and
+        rule 10 says restart is instant.
+
+        Before the HUD's own text in paint order, so the readouts stay sharp —
+        the same arrangement the speed rush above already relies on.
+      */}
+      {s.phase !== 'flying' && <div className="diorama" />}
 
       {/* Flight instruments — thin and minimal, per the art direction. */}
       <div className={`instruments ${s.phase === 'down' ? 'dim' : ''}`}>
@@ -83,7 +111,20 @@ export function Hud({ world, par, metresFlown }: { world: World; par: number; me
             best {metres(s.best)} m · par {metres(par)} m{s.best >= par ? ' ✓' : ''} ·{' '}
             {s.attempts} {s.attempts === 1 ? 'flight' : 'flights'}
           </div>
-          <Share world={world} />
+          {/*
+            Par is a robot; this is the room. Deliberately stated in flights
+            rather than pilots, because that is what the rows are, and shown
+            whatever the number says — a standing you only see when it flatters
+            you is an advert, and the low one is the one that makes you fly
+            again. Absent entirely on a quiet world, which is most of them for
+            the first hours of a day.
+          */}
+          {pct !== null && (
+            <div className="standing">
+              {pct >= 100 ? 'The longest flight logged here' : `Farther than ${pct}% of today's flights`}
+            </div>
+          )}
+          <Share world={world} pct={pct} />
           <div className="again">Fly again</div>
           <Signature />
         </div>
@@ -143,7 +184,7 @@ function Signature() {
  * the card is on the clipboard, there is nothing further to press. The state
  * resets naturally when the results screen unmounts on the next launch.
  */
-function Share({ world }: { world: World }) {
+function Share({ world, pct }: { world: World; pct: number | null }) {
   const [copied, setCopied] = useState(false)
   if (copied) {
     return (
@@ -158,7 +199,7 @@ function Share({ world }: { world: World }) {
       data-ui
       onClick={async () => {
         const rec = recordOf(savedState(), world.day)
-        if (await copyCard(shareCard(world, rec))) setCopied(true)
+        if (await copyCard(shareCard(world, rec, pct))) setCopied(true)
       }}
     >
       Share

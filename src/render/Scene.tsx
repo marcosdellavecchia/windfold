@@ -35,6 +35,7 @@ import { Motes } from './Motes'
 import { LensFlare } from './LensFlare'
 import { FOG_DENSITY, updateAirFog } from './atmosphere'
 import { Sky } from './Sky'
+import { ToneMapping } from './grade'
 import { Thermals } from './Thermals'
 import { PaperPlane, buildDartShadow } from './PaperPlane'
 import { Trail } from './Trail'
@@ -79,6 +80,7 @@ export function Scene({
       />
       <SunLight world={world} planeRef={planeRef} shadows={shadows ?? false} />
 
+      <ToneMapping />
       <Sky world={world} />
       <Terrain world={world} />
       <Trees world={world} />

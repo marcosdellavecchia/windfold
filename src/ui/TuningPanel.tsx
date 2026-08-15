@@ -3,6 +3,7 @@ import { TUNING, resetTuning, type Tuning } from '../sim/tuning'
 import { BIOME_ORDER } from '../sim/palette'
 import { isTurboEnabled, isTyping, setPointerCaptured, setTurboEnabled } from '../input'
 import type { World } from '../sim/world'
+import { GRADE, TONE_MODES, resetGrade } from '../render/grade'
 
 interface Row {
   key: keyof Tuning
@@ -100,7 +101,7 @@ export function TuningPanel({ day, onDay, world }: { day: number; onDay: (d: num
     <div className="tune" data-ui>
       <div className="tuneHead">
         <strong>tuning</strong>
-        <button onClick={() => { resetTuning(); bump((v) => v + 1) }}>reset</button>
+        <button onClick={() => { resetTuning(); resetGrade(); bump((v) => v + 1) }}>reset</button>
         <button onClick={() => setOpen(false)}>close</button>
       </div>
 
@@ -121,6 +122,45 @@ export function TuningPanel({ day, onDay, world }: { day: number; onDay: (d: num
           {world.heightfield.landform2 !== 'plain' ? `+${world.heightfield.landform2}` : ''}
           {world.heightfield.hybrid ? ' · hybrid' : ''}
         </span>
+      </div>
+
+      {/*
+        The grade. Live because a tone curve cannot be judged from a still and
+        cannot be judged on one biome: the only honest way to pick one is to
+        sit on the ready screen, tap through the six of them, and watch what
+        happens to the sun and to the pale end of the palette.
+      */}
+      <div className="tuneGroup">
+        <div className="tuneGroupName">grade</div>
+        <div className="biomeRow">
+          {TONE_MODES.map((m) => (
+            <button
+              key={m}
+              className={m === GRADE.mode ? 'active' : undefined}
+              onClick={() => {
+                GRADE.mode = m
+                bump((v) => v + 1)
+              }}
+            >
+              {m}
+            </button>
+          ))}
+        </div>
+        <div className="tuneRow">
+          <label>exposure</label>
+          <input
+            type="range"
+            min={0.5}
+            max={2}
+            step={0.01}
+            value={GRADE.exposure}
+            onChange={(e) => {
+              GRADE.exposure = parseFloat(e.target.value)
+              bump((v) => v + 1)
+            }}
+          />
+          <span className="num">{GRADE.exposure.toFixed(2)}</span>
+        </div>
       </div>
 
       <div className="tuneGroup">

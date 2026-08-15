@@ -5,6 +5,7 @@ import type { World } from '../sim/world'
 import { rgbToHex, type Rgb } from '../sim/palette'
 import { forestDay } from '../sim/flora'
 import { mulberry32 } from '../sim/rng'
+import { TONEMAP_GLSL } from './grade'
 
 const COUNT = 360
 /** Half-extent of the box the motes live in, metres. */
@@ -210,6 +211,7 @@ export function Motes({ world }: { world: World }) {
           float a = t * t * t * vAlpha * uGlow;
           if (a <= 0.002) discard;
           gl_FragColor = vec4(uColor, a);
+          ${TONEMAP_GLSL}
         }
       `,
     })

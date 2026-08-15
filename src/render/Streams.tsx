@@ -15,6 +15,7 @@ import { meshHeight, type Heightfield } from '../sim/terrain'
 import { Noise2D } from '../sim/noise'
 import { mulberry32 } from '../sim/rng'
 import { AIR_FOG_GLSL, AIR_FOG_UNIFORMS, CLOUD_SHADOW_GLSL, cloudShadowSeed } from './atmosphere'
+import { TONEMAP_GLSL } from './grade'
 
 /**
  * Rivers, as geometry.
@@ -596,6 +597,7 @@ export function Streams({ world }: { world: World }) {
           // boundary would draw its own outline; fading the last fifth lets the
           // water sit in the ground rather than on it.
           gl_FragColor = vec4(col, alpha * 0.92);
+          ${TONEMAP_GLSL}
         }
       `,
     })

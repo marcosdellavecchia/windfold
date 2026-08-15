@@ -8,6 +8,7 @@ import { mulberry32 } from '../sim/rng'
 import type { BiomeId, Rgb } from '../sim/palette'
 import { FLORA, createForestMask, createRockMask, forestAmount, forestColour, rockAmount } from '../sim/flora'
 import { AIR_FOG_GLSL, AIR_FOG_UNIFORMS, CLOUD_SHADOW_GLSL, cloudShadowSeed } from './atmosphere'
+import { GRADED_GLSL } from './grade'
 
 /**
  * Where the permanent snow starts, as a fraction of the day's height range. At or
@@ -149,6 +150,7 @@ function makeMaterial(world: World): MeshLambertMaterial {
         uniform float uCloudSeed;
         ${CLOUD_SHADOW_GLSL}
         ${AIR_FOG_GLSL}
+        ${GRADED_GLSL}
 
         /**
          * Value noise with a quintic fade, for anything that gets differentiated.
@@ -261,11 +263,14 @@ function makeMaterial(world: World): MeshLambertMaterial {
         gl_FragColor.rgb *= cloudShadow(vCloudXZ, uCloudWind, uCloudTime, uCloudSeed);
         {
           // Directional haze in place of the stock flat fog — see atmosphere.ts.
+          // Graded on the way in: this runs after three's tone mapping step,
+          // and the sky's copy of the same haze has already been through the
+          // curve. Ungraded here, the horizon they share becomes a line.
           vec3 airRay = vec3(vCloudXZ.x, vAirY, vCloudXZ.y) - cameraPosition;
           float airDist = length(airRay);
           gl_FragColor.rgb = mix(
             gl_FragColor.rgb,
-            airFogColor(airRay / max(airDist, 1e-4)),
+            graded(airFogColor(airRay / max(airDist, 1e-4))),
             airFogAmount(airDist, vAirY)
           );
         }`,

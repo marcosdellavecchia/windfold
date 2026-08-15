@@ -3,7 +3,7 @@ import { mulberry32, hashSeed, randRange, type Rng } from './rng'
 import { BIOME_ORDER, buildPalette, type BiomeId, type Palette } from './palette'
 import { generateHeightfield, sampleHeight, surfaceHeight, HALF_WORLD, type Heightfield } from './terrain'
 import { generateAir, type Air } from './air'
-import { placeLandmark, type Landmark } from './landmark'
+import { placeLandmark, placeMinorLandmarks, type Landmark, type MinorLandmark } from './landmark'
 import { TUNING } from './tuning'
 import type { LaunchSite } from './flight'
 
@@ -19,6 +19,8 @@ export interface World {
   air: Air
   /** The day's one placed object — every biome has its kind. */
   landmark: Landmark
+  /** Two to four small unnamed curiosities. Scenery, not destinations. */
+  minor: MinorLandmark[]
   launch: LaunchSite
   /** Unit vector pointing at the sun. Low, for long shadows and rim light. */
   sunDir: Vector3
@@ -66,6 +68,9 @@ export function buildWorld(day: number): World {
   // from its own derived stream — inserting a draw into `rng` here would shift
   // everything downstream and regenerate every historical day.
   const landmark = placeLandmark(biome, heightfield, seed)
+  // After the landmark, because they keep their distance from it. Same rule
+  // about the rng: its own derived stream, nothing drawn from `rng`.
+  const minor = placeMinorLandmarks(biome, heightfield, seed, landmark)
   const air = generateAir(heightfield, rng, landmark.kind === 'vent' ? landmark : undefined)
   const launch = findLaunchSite(heightfield, air, rng)
 
@@ -88,7 +93,7 @@ export function buildWorld(day: number): World {
   ).normalize()
   const moonPhase = randRange(rng, -0.95, 0.95)
 
-  return { day, seed, biome, palette, heightfield, air, landmark, launch, sunDir, moonDir, moonPhase }
+  return { day, seed, biome, palette, heightfield, air, landmark, minor, launch, sunDir, moonDir, moonPhase }
 }
 
 /** Yaw that points the aircraft's nose along (dx, dz). Forward is -Z. */

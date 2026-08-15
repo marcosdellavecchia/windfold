@@ -19,17 +19,22 @@ const BLOCKS = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█']
 /** Where the game lives. Full scheme, so the card's last line is a real link. */
 const SITE = 'https://windfold.vercel.app'
 
-export function shareCard(world: World, rec: WorldRecord): string {
+export function shareCard(world: World, rec: WorldRecord, pct: number | null = null): string {
   const m = Math.round(rec.best).toLocaleString('en-US')
   const flights = `${rec.attempts} ${rec.attempts === 1 ? 'flight' : 'flights'}`
   const par = rec.parBeaten ? 'par ✓' : 'par ✗'
   const landed = rec.landed ? ' \u{1F6EC}' : ''
+  // The standing, short enough to ride the stats line. Only from the top half
+  // up: the results screen states the number whatever it is, but a card is a
+  // boast that has to survive being pasted into a group chat, and nobody has
+  // ever sent one that says they were in the bottom third.
+  const standing = pct === null || pct < 50 ? '' : pct >= 100 ? ' · longest yet' : ` · top ${100 - pct}%`
 
   const lines = [
     // The landmark earns its spot on the card: "the lighthouse day" is how a
     // world gets talked about, and the card is where that phrase starts.
     `✈️ Windfold #${world.day} · ${world.palette.mood} ${world.biome} · ${LANDMARK_NAMES[world.landmark.kind]}`,
-    `${m} m · ${flights} · ${par}${landed}`,
+    `${m} m · ${flights} · ${par}${landed}${standing}`,
   ]
   if (rec.profile.length > 0) {
     lines.push('', rec.profile.map((v) => BLOCKS[Math.max(0, Math.min(7, v))]).join(''))

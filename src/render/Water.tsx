@@ -17,6 +17,7 @@ import type { World } from '../sim/world'
 import { rgbToHex } from '../sim/palette'
 import { HALF_WORLD } from '../sim/terrain'
 import { AIR_FOG_GLSL, AIR_FOG_UNIFORMS, CLOUD_SHADOW_GLSL, cloudShadowSeed } from './atmosphere'
+import { TONEMAP_GLSL } from './grade'
 
 /**
  * Lakes and sea. One plane at the day's water level; wherever the terrain is below
@@ -510,6 +511,7 @@ export function Water({ world }: { world: World }) {
           // beach's wet edge rather than an aliased intersection line.
           float shore = smoothstep(0.0, 2.2, depth);
           gl_FragColor = vec4(col, mix(0.86, 0.97, fres) * shore);
+          ${TONEMAP_GLSL}
         }
       `,
     })

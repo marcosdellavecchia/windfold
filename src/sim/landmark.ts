@@ -89,6 +89,168 @@ const TIE_MARGIN: Record<Exclude<LandmarkKind, 'vent' | 'cross' | 'bridge'>, num
 /** See TIE_MARGIN — the bridge equivalent, in units of the drainage field. */
 const BRIDGE_MARGIN = 0.08
 
+/**
+ * The minor tier: two to four small, unnamed curiosities per map.
+ *
+ * The day's landmark is a destination — you plan a leg around it and it goes
+ * on the share card. These are the opposite, and the map needs both: things
+ * you were not looking for and pass anyway. A cairn on a shoulder you happen
+ * to skim, standing stones in a meadow you only see because you were low, a
+ * buoy that tells you the water below you has a shore somewhere. None of them
+ * is worth a detour, which is exactly what makes finding one feel like
+ * *finding* rather than arriving.
+ *
+ * They are deliberately not named, not scored, not on the card and not in the
+ * HUD. A landscape with two kinds of place in it reads as a place; a landscape
+ * where everything is a waypoint reads as a checklist.
+ */
+export type MinorKind = 'cairn' | 'stones' | 'fumarole' | 'buoy' | 'spring'
+
+export interface MinorLandmark {
+  kind: MinorKind
+  x: number
+  z: number
+  y: number
+  heading: number
+  /** Per-instance size, so two cairns on one map are not the same cairn. */
+  scale: number
+}
+
+/**
+ * Two kinds per biome, drawn per instance. One kind per biome made every
+ * minor landmark on a map the same object at different sizes, which is scatter
+ * rather than curiosity.
+ */
+const MINOR_KINDS: Record<BiomeId, MinorKind[]> = {
+  alpine: ['cairn', 'stones'],
+  mesa: ['stones', 'cairn'],
+  coastal: ['buoy', 'cairn'],
+  valley: ['stones', 'spring'],
+  volcanic: ['fumarole', 'spring'],
+  archipelago: ['buoy', 'cairn'],
+}
+
+/** Coarser than the landmark grid: these are small and want no precision. */
+const MINOR_STEPS = 48
+/**
+ * Nothing minor stands within this of the day's landmark or of another minor
+ * one. A curiosity beside the monument is part of the monument, and two of
+ * them together are a settlement — both read as intent, which is the one thing
+ * these must never read as.
+ */
+const MINOR_APART = 1100
+
+export function placeMinorLandmarks(
+  biome: BiomeId,
+  hf: Heightfield,
+  seed: number,
+  main: Landmark,
+): MinorLandmark[] {
+  // Its own stream, like the landmark's, and for the same reason: a draw taken
+  // from the world's rng here would regenerate every historical day.
+  const rng = mulberry32(seed ^ 0x2b7f)
+  const kinds = MINOR_KINDS[biome]
+  const count = 2 + Math.floor(rng() * 3)
+  const reach = HALF_WORLD * EDGE
+  const grad = { x: 0, z: 0 }
+  const water = hf.hasWater ? hf.waterLevel : -Infinity
+
+  /** -Infinity for ground this kind cannot stand on; higher is a better site. */
+  const score = (kind: MinorKind, x: number, z: number, h: number): number => {
+    const t = (h - hf.min) / Math.max(hf.max - hf.min, 1)
+    if (kind === 'buoy') {
+      // Moored water: deep enough to float a buoy, shallow enough to be worth
+      // marking, and with land somewhere close — a buoy in the middle of the
+      // ocean marks nothing.
+      if (!hf.hasWater) return -Infinity
+      const depth = water - h
+      if (depth < 4 || depth > 45) return -Infinity
+      let land = 0
+      for (let k = 0; k < 6; k++) {
+        const a = (k / 6) * Math.PI * 2
+        if (sampleHeight(hf, x + Math.cos(a) * 420, z + Math.sin(a) * 420) > water) land++
+      }
+      return land > 0 ? 40 - Math.abs(depth - 14) : -Infinity
+    }
+
+    if (h < water + 5) return -Infinity
+    sampleGradient(hf, x, z, grad)
+    const slope = Math.hypot(grad.x, grad.z)
+
+    switch (kind) {
+      case 'cairn': {
+        // A shoulder or a minor top — high ground that is not the summit, since
+        // the summit is where the alpine day's own landmark already stands.
+        if (t < 0.45 || slope > 0.3) return -Infinity
+        let around = 0
+        for (let k = 0; k < 6; k++) {
+          const a = (k / 6) * Math.PI * 2
+          around += sampleHeight(hf, x + Math.cos(a) * 260, z + Math.sin(a) * 260)
+        }
+        return h - around / 6
+      }
+      case 'stones':
+        // Flat open ground, low to middling: a meadow, a bench, a pan.
+        if (t < 0.08 || t > 0.65 || slope > 0.09) return -Infinity
+        return 10 - slope * 60
+      case 'fumarole':
+        // Upper slopes, where a volcanic map's heat would actually vent.
+        if (t < 0.35 || slope > 0.36) return -Infinity
+        return t * 10
+      case 'spring':
+        // The flattest low ground there is — a pool has to sit level.
+        if (t > 0.45 || slope > 0.07) return -Infinity
+        return 10 - slope * 80
+      default:
+        return -Infinity
+    }
+  }
+
+  const out: MinorLandmark[] = []
+  const farEnough = (x: number, z: number) => {
+    if (Math.hypot(x - main.x, z - main.z) < MINOR_APART) return false
+    return out.every((m) => Math.hypot(x - m.x, z - m.z) >= MINOR_APART)
+  }
+
+  for (let n = 0; n < count; n++) {
+    const kind = kinds[Math.floor(rng() * kinds.length) % kinds.length]
+    // Every site that clears the gate and the spacing, then a seeded pick —
+    // the same shape as the landmark search, without the tie margin, because
+    // for these the variety *is* the point and the best site is not.
+    const xs: number[] = []
+    const zs: number[] = []
+    for (let i = 0; i <= MINOR_STEPS; i++) {
+      for (let j = 0; j <= MINOR_STEPS; j++) {
+        const x = -reach + (i / MINOR_STEPS) * reach * 2
+        const z = -reach + (j / MINOR_STEPS) * reach * 2
+        if (score(kind, x, z, sampleHeight(hf, x, z)) > -Infinity && farEnough(x, z)) {
+          xs.push(x)
+          zs.push(z)
+        }
+      }
+    }
+    // A day whose terrain offers this kind nowhere simply has one fewer. There
+    // is no fallback on purpose: a cairn dumped on the one cell that scored
+    // -Infinity least is the kind of thing that ends up floating in a lake.
+    if (xs.length === 0) continue
+    const at = Math.floor(rng() * xs.length) % xs.length
+    const jx = xs[at] + (rng() * 2 - 1) * 70
+    const jz = zs[at] + (rng() * 2 - 1) * 70
+    const ok = score(kind, jx, jz, sampleHeight(hf, jx, jz)) > -Infinity
+    const x = ok ? jx : xs[at]
+    const z = ok ? jz : zs[at]
+    out.push({
+      kind,
+      x,
+      z,
+      y: sampleHeight(hf, x, z),
+      heading: rng() * Math.PI * 2,
+      scale: 0.8 + rng() * 0.5,
+    })
+  }
+  return out
+}
+
 export function placeLandmark(biome: BiomeId, hf: Heightfield, seed: number): Landmark {
   const kind = KINDS[biome]
 

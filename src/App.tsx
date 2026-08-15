@@ -63,6 +63,8 @@ import { Canvas } from '@react-three/fiber'
 import { buildWorld, dayNumber } from './sim/world'
 import { computePar } from './sim/par'
 import { fetchPresence, type Presence, type RestPoint } from './game/net'
+import { standingPool } from './game/standing'
+import { readGradeOverride } from './render/grade'
 
 /**
  * The server's view arriving after local flights have already been merged in:
@@ -103,11 +105,20 @@ export default function App() {
   // decorative — the fetch failing (offline, no backend, dev) leaves the
   // game exactly as it was.
   const [presence, setPresence] = useState<Presence | null>(null)
+  // The day's distances as the server sent them, kept apart from `presence` on
+  // purpose: presence gains your own flights as you fly, and a standing that
+  // counts your own crashes in its denominator rewards grinding instead of
+  // flying well. This is the field you are measured against, and it is
+  // everyone else.
+  const [pool, setPool] = useState<number[]>([])
   useEffect(() => {
     let alive = true
     setPresence(null)
+    setPool([])
     void fetchPresence(day).then((p) => {
-      if (alive && p) setPresence((cur) => (cur ? mergePresence(cur, p) : p))
+      if (!alive || !p) return
+      setPresence((cur) => (cur ? mergePresence(cur, p) : p))
+      setPool(standingPool(p.rests))
     })
     return () => {
       alive = false
@@ -202,10 +213,18 @@ export default function App() {
     return window.matchMedia('(pointer: fine)').matches
   }, [])
 
+  // ?grade= / ?exposure= before the first frame, so an A/B link never shows a
+  // frame of the default curve first.
+  useMemo(readGradeOverride, [])
+
   return (
     <>
+      {/*
+        No `flat` on the canvas any more: the tone curve is owned by
+        <ToneMapping/> inside it so the panel can change it live, and two
+        owners of `gl.toneMapping` is one too many.
+      */}
       <Canvas
-        flat
         shadows={shadowsOn ? 'soft' : false}
         dpr={[1, 1.75]}
         gl={{ antialias: true, powerPreference: 'high-performance' }}
@@ -225,7 +244,7 @@ export default function App() {
       </Canvas>
       <div className="dream" aria-hidden="true" />
       {veil && <WorldVeil phase={veil.phase} onDone={veilDone} />}
-      <Hud world={world} par={par} metresFlown={presence?.metres ?? 0} />
+      <Hud world={world} par={par} metresFlown={presence?.metres ?? 0} pool={pool} />
       <AudioToggle muted={music.muted} onToggle={music.toggle} />
       <TuningPanel day={day} onDay={changeDay} world={world} />
     </>

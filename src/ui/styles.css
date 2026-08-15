@@ -282,6 +282,17 @@ canvas {
   }
 }
 
+/* The standing. Pitched between the meta line and the presence line on the
+   splash: it is about other people, so it stays ambient — but it is about you
+   among them, so it is not as faint as the pooled-metres line. */
+.result .standing {
+  margin-top: 5px;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: rgba(255, 255, 255, 0.5);
+  font-variant-numeric: tabular-nums;
+}
+
 .result .fanfare {
   font-size: 13px;
   letter-spacing: 0.3em;
@@ -575,6 +586,48 @@ canvas {
  * button, so an overlay that swallowed pointer events would eat the very input
  * that summoned it.
  */
+/* The ready/results diorama — see Hud.tsx. There is no "off" rule here because
+   there is no off state: the element is mounted only when the plane is not
+   flying, which is the only way to be sure a full-frame backdrop filter costs
+   nothing at sixty frames a second. The blur is in vh so a tall window gets a
+   proportionally deeper one — a fixed pixel radius reads as a heavy fog on a
+   phone and as nothing at all on a 5K display. */
+.diorama {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  -webkit-backdrop-filter: blur(0.85vh);
+  backdrop-filter: blur(0.85vh);
+  /* Sharp through the middle of the frame, softening toward both edges. A
+     wider sharp band than a photographic tilt-shift would use, because three
+     things have to stay crisp in it: the plane, the horizon, and the splash. */
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    #000 0%,
+    rgba(0, 0, 0, 0.72) 15%,
+    transparent 37%,
+    transparent 61%,
+    rgba(0, 0, 0, 0.78) 87%,
+    #000 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    #000 0%,
+    rgba(0, 0, 0, 0.72) 15%,
+    transparent 37%,
+    transparent 61%,
+    rgba(0, 0, 0, 0.78) 87%,
+    #000 100%
+  );
+  animation: dioramaIn 520ms ease-out both;
+}
+
+@keyframes dioramaIn {
+  from {
+    opacity: 0;
+  }
+}
+
 .speedRush {
   position: absolute;
   inset: 0;

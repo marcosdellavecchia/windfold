@@ -13,6 +13,7 @@ import type { World } from '../sim/world'
 import { rgbToHex } from '../sim/palette'
 import { mulberry32 } from '../sim/rng'
 import { AIR_FOG_GLSL, AIR_FOG_UNIFORMS } from './atmosphere'
+import { TONEMAP_GLSL } from './grade'
 
 /** Soft puffs per cumulus. Enough to read as a lump rather than a disc. */
 const PUFFS = 13
@@ -170,6 +171,7 @@ export function Clouds({ world }: { world: World }) {
           col += (cdHash(gl_FragCoord.xy) - 0.5) * 0.004;
 
           gl_FragColor = vec4(col, a * 0.9 * (1.0 - fogA));
+          ${TONEMAP_GLSL}
         }
       `,
     })

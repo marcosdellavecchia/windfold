@@ -5,21 +5,34 @@
 import { WebGLRenderer, PerspectiveCamera, Scene, DirectionalLight, AmbientLight, Color, Mesh, PlaneGeometry, MeshLambertMaterial } from 'three'
 import { buildWorld } from '/src/sim/world'
 import { updateAirFog } from '/src/render/atmosphere'
-import { buildCross, buildArch, buildBridge, buildWreck } from '/src/render/Landmarks'
+import { buildCross, buildArch, buildBridge, buildWreck, buildMinor } from '/src/render/Landmarks'
 import { meshHeight } from '/src/sim/terrain'
 
 const day = Number(new URLSearchParams(location.search).get('world') ?? 248)
 const world = buildWorld(day)
 updateAirFog(world)
 const builders = { cross: buildCross, arch: buildArch, bridge: buildBridge, wreck: buildWreck }
-const build = builders[world.landmark.kind]
-if (!build) throw new Error('kind not in harness: ' + world.landmark.kind)
 
+// ?minor=N frames the Nth minor landmark instead of the day's own. The minor
+// tier bakes world positions into its geometry, so the group goes in as-is and
+// the camera moves to it.
+const minorAt = new URLSearchParams(location.search).get('minor')
 const scene = new Scene()
 scene.background = new Color(0x9fb4c8)
-const { group } = build(world)
-scene.add(group)
-const lm = world.landmark
+let lm
+if (minorAt !== null) {
+  const m = world.minor[Number(minorAt) || 0]
+  if (!m) throw new Error(`world ${day} has no minor landmark ${minorAt} (it has ${world.minor.length})`)
+  scene.add(buildMinor(world).group)
+  lm = m
+  document.title = 'minor:' + m.kind
+} else {
+  const build = builders[world.landmark.kind]
+  if (!build) throw new Error('kind not in harness: ' + world.landmark.kind)
+  scene.add(build(world).group)
+  lm = world.landmark
+  document.title = 'landmark:' + world.landmark.kind
+}
 // A ground slab at the site's height, so pier/base contact is judgeable.
 const gy = meshHeight(world.heightfield, lm.x, lm.z)
 const slab = new Mesh(new PlaneGeometry(400, 400), new MeshLambertMaterial({ color: 0x6b7a5e }))
@@ -37,13 +50,14 @@ scene.add(sun, sun.target)
 scene.add(new AmbientLight(0xbfd0e0, 0.8))
 
 const camera = new PerspectiveCamera(55, innerWidth / innerHeight, 1, 5000)
-camera.position.set(lm.x + 130, gy + 55, lm.z + 95)
-camera.lookAt(lm.x, gy + 22, lm.z)
+// The minor tier is a third the size of a landmark, so the harness moves in.
+const near = minorAt !== null
+camera.position.set(lm.x + (near ? 42 : 130), gy + (near ? 20 : 55), lm.z + (near ? 32 : 95))
+camera.lookAt(lm.x, gy + (near ? 7 : 22), lm.z)
 
 const r = new WebGLRenderer({ antialias: true })
 r.shadowMap.enabled = true
 r.setSize(innerWidth, innerHeight)
 document.body.appendChild(r.domElement)
 r.render(scene, camera)
-document.title = 'landmark:' + world.landmark.kind
 </script></body></html>

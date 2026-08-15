@@ -1,5 +1,6 @@
 import { Color, Vector3, type Material } from 'three'
 import type { World } from '../sim/world'
+import { GRADED_GLSL } from './grade'
 
 /**
  * Single source of truth for the fog. Three separate shaders reproduce the scene's
@@ -209,15 +210,22 @@ export function patchAirFog(mat: Material) {
         }`,
       )
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', `#include <common>\nvarying vec3 vAirWorld;\n${AIR_FOG_GLSL}`)
+      .replace(
+        '#include <common>',
+        `#include <common>\nvarying vec3 vAirWorld;\n${AIR_FOG_GLSL}\n${GRADED_GLSL}`,
+      )
       .replace(
         '#include <fog_fragment>',
         `{
           vec3 airRay = vAirWorld - cameraPosition;
           float airDist = length(airRay);
+          // graded(), because this chunk runs *after* three's tone mapping
+          // step: the haze the sky converges to has been through the curve,
+          // and haze that has not would draw a line along the horizon where
+          // the two meet. See grade.tsx.
           gl_FragColor.rgb = mix(
             gl_FragColor.rgb,
-            airFogColor(airRay / max(airDist, 1e-4)),
+            graded(airFogColor(airRay / max(airDist, 1e-4))),
             airFogAmount(airDist, vAirWorld.y)
           );
         }`,

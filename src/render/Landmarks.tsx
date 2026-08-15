@@ -19,11 +19,13 @@ import {
   ShaderMaterial,
 } from 'three'
 import type { World } from '../sim/world'
+import type { MinorLandmark } from '../sim/landmark'
 import { rgbToHex, type Rgb } from '../sim/palette'
 import { meshHeight } from '../sim/terrain'
 import { mulberry32 } from '../sim/rng'
 import { AIR_FOG_GLSL, AIR_FOG_UNIFORMS, patchAirFog } from './atmosphere'
 import { merge, translated, rotatedX, rotatedZ, scaled, mix, scale } from './Trees'
+import { TONEMAP_GLSL } from './grade'
 
 /**
  * The day's landmark, drawn. Which biome gets what — and where it stands — is
@@ -36,6 +38,15 @@ import { merge, translated, rotatedX, rotatedZ, scaled, mix, scale } from './Tre
  * collide — nothing in this game does but the ground.
  */
 export function Landmarks({ world }: { world: World }) {
+  return (
+    <>
+      <TheLandmark world={world} />
+      <MinorLandmarks world={world} />
+    </>
+  )
+}
+
+function TheLandmark({ world }: { world: World }) {
   switch (world.landmark.kind) {
     case 'lighthouse':
       return <Lighthouse world={world} />
@@ -277,6 +288,7 @@ function VentPlume({ world }: { world: World }) {
           float airDist = length(airRay);
           vec3 col = mix(uColor, airFogColor(airRay / max(airDist, 1e-4)), airFogAmount(airDist, vAirWorld.y));
           gl_FragColor = vec4(col, a * body);
+          ${TONEMAP_GLSL}
         }
       `,
     })
@@ -475,4 +487,346 @@ export function buildWreck(world: World) {
   built.group.position.set(lm.x, base, lm.z)
   built.group.rotation.y = lm.heading ?? 0
   return built
+}
+
+/* ------------------------------------------------------------- the minor tier */
+
+/**
+ * The small unnamed things: cairns, standing stones, a fumarole, a buoy, a hot
+ * spring. Placement and count are decided in sim/landmark.ts; this file only
+ * knows what each one looks like.
+ *
+ * Two rules separate these from the day's landmark, and both are deliberate.
+ * They are *small* — ten metres and change against the landmark's fifty — so
+ * that coming across one is a reward for flying low rather than a thing you
+ * navigate by. And they are built into one merged geometry per material, with
+ * their world positions baked in, so the whole tier costs two or three draw
+ * calls and no per-frame work at all. Only the fumarole animates, because a
+ * fumarole that does not smoke is a rock with a hole in it.
+ */
+export function MinorLandmarks({ world }: { world: World }) {
+  const { group, dispose } = useMemo(() => buildMinor(world), [world])
+  useEffect(() => dispose, [dispose])
+  const vents = useMemo(() => world.minor.filter((m) => m.kind === 'fumarole'), [world])
+  return (
+    <>
+      <primitive object={group} />
+      {vents.length > 0 && <FumaroleSteam world={world} vents={vents} />}
+    </>
+  )
+}
+
+/** Yaw for a geometry, to sit alongside Trees' rotatedX/rotatedZ. */
+const rotatedY = (g: BufferGeometry, a: number) => g.rotateY(a)
+
+/**
+ * One pass over the day's minor landmarks, sorting their parts into buckets by
+ * what colour they need. Anything stone shares a bucket; the pool and the buoy
+ * each need a colour of their own, and neither appears on a map that has the
+ * other, so in practice this is one or two meshes.
+ */
+export function buildMinor(world: World) {
+  const pal = world.palette
+  const hf = world.heightfield
+  const stone: Array<{ geo: BufferGeometry; tint: number }> = []
+  const pool: Array<{ geo: BufferGeometry; tint: number }> = []
+  const water: Array<{ geo: BufferGeometry; tint: number }> = []
+  const vent: Array<{ geo: BufferGeometry; tint: number }> = []
+  const paint: Array<{ geo: BufferGeometry; tint: number }> = []
+
+  for (const m of world.minor) {
+    // Ground height at the drawn surface, like every other structure, and sunk
+    // a little: these sit on slopes small enough to lift a base off the hill.
+    const y = meshHeight(hf, m.x, m.z) - 1.2
+    switch (m.kind) {
+      case 'cairn':
+        buildCairn(m, stone, y)
+        break
+      case 'stones':
+        buildStones(m, stone, y)
+        break
+      case 'fumarole':
+        buildFumarole(m, vent, y)
+        break
+      case 'spring':
+        buildSpring(m, pool, water, y)
+        break
+      case 'buoy':
+        buildBuoy(m, paint, hf.waterLevel)
+        break
+    }
+  }
+
+  const g = new Group()
+  const dispose: Array<() => void> = []
+  const add = (parts: Array<{ geo: BufferGeometry; tint: number }>, color: number) => {
+    if (parts.length === 0) return
+    const geo = merge(parts)
+    const mat = new MeshLambertMaterial({ vertexColors: true, color })
+    patchAirFog(mat)
+    const mesh = new Mesh(geo, mat)
+    mesh.castShadow = true
+    // Positions are baked in world space, so the mesh's own box is the whole
+    // map and frustum culling on it would be a lie.
+    mesh.frustumCulled = false
+    g.add(mesh)
+    dispose.push(() => {
+      geo.dispose()
+      mat.dispose()
+    })
+  }
+
+  // Pulled toward the sand band exactly like the arch and the bridge: raw rock
+  // out in the open light renders near-black on most of these palettes.
+  add(stone, rgbToHex(mix(pal.rock, pal.sand, 0.55)))
+  // Sinter and mineral crust — a hot spring's giveaway from the air is the pale
+  // ring around it, not the water.
+  add(pool, rgbToHex(mix(pal.sand, WHITE, 0.4)))
+  // The pool itself, in the day's own water colour — a spring is the same
+  // water as the lakes, just somewhere unlikely.
+  add(water, rgbToHex(scale(pal.water, 0.85)))
+  // Sulphur crust. Its own colour and not a bright tint on the stone, because
+  // the fumarole only ever stands on the volcanic palette, whose rock is so
+  // close to black that no multiplier rescues it — at 1.25 tint the cone still
+  // rendered as a hole in the hillside. A vent's rim is caked pale anyway.
+  add(vent, rgbToHex(mix(mix(pal.rock, pal.sand, 0.5), mix(pal.sun, WHITE, 0.45), 0.62)))
+  // The one painted object in the landscape. Buoys are painted to be found.
+  add(paint, rgbToHex(mix(pal.sun, WHITE, 0.25)))
+
+  return { group: g, dispose: () => dispose.forEach((d) => d()) }
+}
+
+/** A stack of rounded stones, biggest at the bottom, leaning as it goes up. */
+function buildCairn(m: MinorLandmark, out: Array<{ geo: BufferGeometry; tint: number }>, y: number) {
+  const s = m.scale
+  const sizes = [3.4, 2.7, 2.1, 1.5]
+  // Start half a stone below ground: the base has to be bedded in the hill, not
+  // resting on it, or the whole stack reads as dropped there.
+  let h = -sizes[0] * s * 0.25
+  sizes.forEach((r, i) => {
+    const rr = r * s
+    // Stones overlap rather than touch — a stack of tangent spheres is a
+    // string of beads, and the first cut of this looked like exactly that.
+    h += rr * 0.5
+    // Each stone a little off the axis, but only a little: a cairn is stacked
+    // by hand, and the first pass leaned so far it read as a rockfall.
+    const lean = i * 0.22 * s
+    const a = m.heading + i * 1.9
+    out.push({
+      geo: translated(
+        scaled(new IcosahedronGeometry(rr, 0), 1.15, 0.72, 1.05),
+        m.x + Math.cos(a) * lean,
+        y + h,
+        m.z + Math.sin(a) * lean,
+      ),
+      tint: 1.0 - i * 0.07,
+    })
+    h += rr * 0.42
+  })
+}
+
+/** A ring of standing slabs, one fallen. */
+function buildStones(m: MinorLandmark, out: Array<{ geo: BufferGeometry; tint: number }>, y: number) {
+  const s = m.scale
+  const r = 13 * s
+  const n = 6
+  for (let i = 0; i < n; i++) {
+    const a = m.heading + (i / n) * Math.PI * 2
+    const x = m.x + Math.cos(a) * r
+    const z = m.z + Math.sin(a) * r
+    if (i === 2) {
+      // The fallen one. A complete ring reads as built yesterday; a gap in it
+      // reads as old, which is the whole idea of the thing.
+      out.push({
+        geo: translated(rotatedY(rotatedZ(new BoxGeometry(9 * s, 3.4 * s, 2.4 * s), 0.08), -a), x, y + 1.4 * s, z),
+        tint: 0.82,
+      })
+      continue
+    }
+    const h = (8.5 + ((i * 37) % 5)) * s
+    out.push({
+      // Tilted a few degrees each, alternating, so the ring is weathered
+      // rather than machined.
+      geo: translated(
+        rotatedY(rotatedZ(new BoxGeometry(3.6 * s, h, 1.7 * s), (i % 2 ? 1 : -1) * 0.05), -a),
+        x,
+        y + h / 2,
+        z,
+      ),
+      tint: 0.95 - (i % 3) * 0.06,
+    })
+  }
+}
+
+/** A low spatter cone with a dark throat. The steam is a separate system. */
+function buildFumarole(m: MinorLandmark, out: Array<{ geo: BufferGeometry; tint: number }>, y: number) {
+  const s = m.scale
+  out.push({
+    geo: translated(new CylinderGeometry(5.2 * s, 11 * s, 7 * s, 9), m.x, y + 3.5 * s, m.z),
+    tint: 1.0,
+  })
+  // The throat, dark against the crust, and proud of the cone's lip so the two
+  // never z-fight.
+  out.push({
+    geo: translated(new CylinderGeometry(3.1 * s, 4.4 * s, 2.2 * s, 9), m.x, y + 7.3 * s, m.z),
+    tint: 0.22,
+  })
+}
+
+/**
+ * A steaming pool: a sunk disc of water inside a raised sinter rim. The rim
+ * and the water go into different buckets because they are different colours —
+ * as a dark tint on the sinter the water came out brown, which is a mud
+ * puddle. The pale ring around dark water is the whole signature of the thing
+ * from the air.
+ */
+function buildSpring(
+  m: MinorLandmark,
+  rim: Array<{ geo: BufferGeometry; tint: number }>,
+  water: Array<{ geo: BufferGeometry; tint: number }>,
+  y: number,
+) {
+  const s = m.scale
+  rim.push({ geo: translated(new CylinderGeometry(15 * s, 17 * s, 1.6 * s, 16), m.x, y + 0.8 * s, m.z), tint: 1.0 })
+  water.push({ geo: translated(new CylinderGeometry(12 * s, 12 * s, 1.2 * s, 16), m.x, y + 1.3 * s, m.z), tint: 1.0 })
+}
+
+/** A channel buoy: float, mast, topmark. Sits on the waterline, not the bed. */
+function buildBuoy(m: MinorLandmark, out: Array<{ geo: BufferGeometry; tint: number }>, waterLevel: number) {
+  const s = m.scale
+  const y = waterLevel - 1.2
+  out.push({ geo: translated(new CylinderGeometry(2.6 * s, 3.4 * s, 5.2 * s, 8), m.x, y + 2.6 * s, m.z), tint: 1.0 })
+  out.push({ geo: translated(new ConeGeometry(2.6 * s, 3 * s, 8), m.x, y + 6.7 * s, m.z), tint: 0.72 })
+  out.push({ geo: translated(new CylinderGeometry(0.35 * s, 0.35 * s, 7 * s, 5), m.x, y + 11 * s, m.z), tint: 0.5 })
+  out.push({ geo: translated(new IcosahedronGeometry(1.5 * s, 0), m.x, y + 14.6 * s, m.z), tint: 0.9 })
+}
+
+/** Puffs per fumarole. A wisp, not the vent's column. */
+const STEAM_N = 30
+/** How high a wisp climbs before it is recycled at the throat, metres. */
+const STEAM_SPAN = 46
+const STEAM_RISE = 0.19
+
+/**
+ * Steam off every fumarole on the map, in one buffer and one draw call.
+ *
+ * The day's vent gets a 200-metre column that doubles as a wind sock; this is
+ * the opposite — a thin curl that has usually dissolved by the time it is as
+ * tall as the cone it comes out of. It leans downwind for the same reason the
+ * vent does, but weakly: near the ground the wisp is still mostly buoyant.
+ */
+function FumaroleSteam({ world, vents }: { world: World; vents: MinorLandmark[] }) {
+  const ref = useRef<Points>(null)
+  const viewportHeight = useThree((s) => s.size.height * s.viewport.dpr)
+
+  const { geometry, material, state } = useMemo(() => {
+    const rng = mulberry32(world.seed ^ 0x7c31)
+    const pal = world.palette
+    const n = vents.length * STEAM_N
+    const positions = new Float32Array(n * 3)
+    const grow = new Float32Array(n)
+    const angle = new Float32Array(n)
+    const radius = new Float32Array(n)
+    const height = new Float32Array(n)
+    const spin = new Float32Array(n)
+    const src = new Int32Array(n)
+    for (let i = 0; i < n; i++) {
+      src[i] = Math.floor(i / STEAM_N)
+      angle[i] = rng() * Math.PI * 2
+      radius[i] = 0.25 + Math.sqrt(rng()) * 0.75
+      height[i] = rng()
+      spin[i] = 0.2 + rng() * 0.5
+    }
+
+    const geo = new BufferGeometry()
+    geo.setAttribute('position', new BufferAttribute(positions, 3).setUsage(35048))
+    geo.setAttribute('aGrow', new BufferAttribute(grow, 1).setUsage(35048))
+
+    const mat = new ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      uniforms: {
+        // Paler than the vent's ash: this is water vapour, so it takes the
+        // day's light rather than the day's rock.
+        uColor: { value: new Color(rgbToHex(mix(pal.fog, WHITE, 0.45))) },
+        uSize: { value: 34 },
+        uOpacity: { value: 0.3 },
+        uViewportH: { value: 1000 },
+        ...AIR_FOG_UNIFORMS,
+      },
+      vertexShader: /* glsl */ `
+        uniform float uSize;
+        uniform float uViewportH;
+        attribute float aGrow;
+        varying float vGrow;
+        varying vec3 vAirWorld;
+
+        void main() {
+          vec4 mv = modelViewMatrix * vec4(position, 1.0);
+          float dist = max(-mv.z, 0.001);
+          float size = uSize * mix(0.35, 1.5, aGrow);
+          gl_PointSize = size * (uViewportH * projectionMatrix[1][1] * 0.5) / dist;
+          gl_Position = projectionMatrix * mv;
+          vGrow = aGrow;
+          vAirWorld = position;
+        }
+      `,
+      fragmentShader: /* glsl */ `
+        uniform vec3 uColor;
+        uniform float uOpacity;
+        varying float vGrow;
+        varying vec3 vAirWorld;
+
+        ${AIR_FOG_GLSL}
+
+        void main() {
+          float d = length(gl_PointCoord - vec2(0.5));
+          float t = clamp(1.0 - d * 2.0, 0.0, 1.0);
+          float a = t * t;
+          // Gone well before the top of its arc — steam, not smoke.
+          float body = uOpacity * (1.0 - vGrow) * (1.0 - vGrow);
+          if (a * body <= 0.004) discard;
+          vec3 airRay = vAirWorld - cameraPosition;
+          float airDist = length(airRay);
+          vec3 col = mix(uColor, airFogColor(airRay / max(airDist, 1e-4)), airFogAmount(airDist, vAirWorld.y));
+          gl_FragColor = vec4(col, a * body);
+          ${TONEMAP_GLSL}
+        }
+      `,
+    })
+
+    return { geometry: geo, material: mat, state: { positions, grow, angle, radius, height, spin, src } }
+  }, [world, vents])
+
+  useEffect(
+    () => () => {
+      geometry.dispose()
+      material.dispose()
+    },
+    [geometry, material],
+  )
+
+  useFrame((_, dt) => {
+    material.uniforms.uViewportH.value = viewportHeight
+    const d = Math.min(dt, 0.1)
+    const { positions, grow, angle, radius, height, spin, src } = state
+    for (let i = 0; i < src.length; i++) {
+      height[i] += STEAM_RISE * d
+      if (height[i] > 1) height[i] -= 1
+      angle[i] += spin[i] * d
+      const v = vents[src[i]]
+      const r = radius[i] * (3 + height[i] * 26) * v.scale
+      const drift = height[i] * STEAM_SPAN * 0.1
+      positions[i * 3] = v.x + Math.cos(angle[i]) * r + world.air.windX * drift * 0.3
+      positions[i * 3 + 1] = v.y + 7 * v.scale + height[i] * STEAM_SPAN
+      positions[i * 3 + 2] = v.z + Math.sin(angle[i]) * r + world.air.windZ * drift * 0.3
+      grow[i] = height[i]
+    }
+    if (ref.current) {
+      ;(ref.current.geometry.attributes.position as BufferAttribute).needsUpdate = true
+      ;(ref.current.geometry.attributes.aGrow as BufferAttribute).needsUpdate = true
+    }
+  })
+
+  return <points ref={ref} geometry={geometry} material={material} frustumCulled={false} />
 }

@@ -3,9 +3,10 @@
 > A daily paper-plane gliding game in the browser. One landscape a day, as many flights as you like, best distance is your record. *Fly windfolded.*
 
 **Status:** the solo game is complete and the first multiplayer layer is live.
-What remains from the original plan: other players' ghost trails and the share
-card's percentile line, both waiting on the ghost backend. A streak was built
-and cut. See [The game today](#the-game-today) for what exists and
+What remains from the original plan: other players' ghost trails, waiting on the
+ghost backend. The percentile line was waiting on that backend too and turned
+out not to need it — the presence layer was already carrying today's
+distances. A streak was built and cut. See [The game today](#the-game-today) for what exists and
 [Built so far](#built-so-far) for how it got that way.
 
 ---
@@ -22,7 +23,9 @@ relief, water, one or two structural landforms (rivers, canyons, caldera,
 escarpment, dunes, terraces, buttes, glacial trough, crater field), a colour
 grade, forests with per-day character and rare blossom/autumn seasons,
 beaches with wet sand, herds of animals, cloud shadows, swell and surf
-on the sea, and a sky with sun halo, daylight stars, a moon with earthshine,
+on the sea, two to four small unnamed curiosities — a cairn on a shoulder,
+standing stones in a meadow, a steaming fumarole, a channel buoy, a hot
+spring — that are worth finding and never worth a detour, and a sky with sun halo, daylight stars, a moon with earthshine,
 and the occasional falling star. `R` rerolls a world for testing; `?world=N`
 links to any specific one.
 
@@ -51,6 +54,13 @@ server-side); a label floats above each signed dart, "Gloaming Fox · 2.7 km",
 fading in as you approach. The splash counts the pooled total: "pilots have
 flown 123 km here." Your own attempts also stay on screen as faint ghost
 lines, your best brighter than the rest.
+
+**The light.** The frame runs through a tone curve (Khronos PBR Neutral, a
+sixth of a stop up) rather than going to the screen raw, which is the
+difference between a sun and a white hole where the sun should be. On the ready
+and results screens — and nowhere else, so it cannot cost a frame in flight — a
+tilt-shift band softens the top and bottom of the picture, and the landscape
+reads as a model of itself.
 
 **The rest of the feel.** Generated ambient music, seeded per day like the
 terrain, that hears the flight: bells rise with thermal lift, altitude opens
@@ -82,6 +92,10 @@ and lets you step through days, jump to a random day, or jump to a random day of
 chosen biome; `R` rerolls a random world from anywhere. `?world=N` loads a specific
 world directly, and the URL tracks world changes so one found while testing can be
 linked — which is also what makes every share card a challenge link.
+
+`landmark-dev.html` renders the day's landmark up close (`?world=N`), or any of
+its minor landmarks (`?world=N&minor=0`), against a flat slab — the fastest way
+to judge whether a thing sits on the ground properly.
 
 `npm run sim:check` runs `src/dev/glideTest.ts`: launch-site pressure, hands-off
 distance versus a thermal-chaining autopilot, trim stability, stall entry and recovery,
@@ -194,6 +208,7 @@ Beautiful landscapes are as much the reason to return as the score is.
 
 - Stylised, not realistic. Large silhouettes, strong atmospheric perspective, heavy distance fog tinted to the day's palette, a low sun.
 - **Slightly wrong on purpose.** A refraction-flattened sun, a moon in daylight, dust hanging in front of the camera, colour that does not quite belong to any hour. The player should half-notice these rather than see them. It is the difference between a landscape and a remembered one, and it is cheap: every one of them is a few lines in a shader that was already running.
+- A tone curve, chosen by putting all six biomes side by side: ACES lifted the sky around the sun until the palette's colour was gone from it, AgX greyed a violet coastal evening, and Khronos Neutral touched only the top of the range, which is where the fault was. Every palette here was authored against no curve at all, so a curve that re-grades the midtones is not a change to the sun — it is six biomes of re-tuning to fix something else. `?grade=off|neutral|aces|agx|reinhard|cineon` and the tuning panel switch it live.
 - One striking seeded colour palette per day, plus one of six named grades that splits sky and ground in opposite hue directions. Vertex-coloured or gradient-ramped terrain rather than textures.
 - The plane sits small on screen and always in frame. Camera follows loosely behind with slight lag and roll, so the horizon tilts.
 - No UI chrome during flight beyond distance and altitude, thin and minimal.
@@ -243,12 +258,14 @@ The world's name is on the card, and the URL — full scheme, so every chat app
 makes it clickable — opens that exact world: every card is also a challenge
 link. Par gives the card a verdict the way Wordle's
 X/6 does, comparable between players whose distances differ wildly; 🛬 marks a
-best flight that ended in a gentle landing. The percentile line ("Top 12%
-today") arrives with the backend.
+best flight that ended in a gentle landing. `· top 12%` is the standing, and it
+appears only from the median up — the results screen states the number whatever
+it is, but a card is a boast, and nobody has ever sent one saying they were in
+the bottom third.
 
 - The block strip is the **altitude profile of your best flight**, derived from its recorded path. It's a picture of how you flew, which is what makes it worth sharing.
 - Attempt count sits next to the distance. It's the honest context for the number, and it's the thing friends will compete on once distances converge.
-- Percentile comes from today's distribution of best distances.
+- The standing is computed client-side from the resting points the presence layer already ships: every rest carries the distance that produced it, so a sort over the day's sample is the whole feature. It counts *flights*, not pilots — one player's thirty attempts are thirty rows — and the pool is everyone else, because letting your own crashes pad the denominator would make grinding look like improving. Below twenty samples it says nothing at all.
 - Must survive pasting into WhatsApp, iMessage, and Discord as text. No image generation in v1.
 
 ---
@@ -865,9 +882,9 @@ literally true.
 4. **Flight recording, own-attempt ghosts, backend, other players' ghosts.**
    Recording and own-attempt ghosts are done — the remaining half of this step is
    the backend and everyone else's trails.
-5. ~~**Share card, best-and-attempts screen.**~~ Done, minus the percentile
-   line, which needs the backend. The streak was built here and cut — see the
-   design rules.
+5. ~~**Share card, best-and-attempts screen.**~~ Done, percentile line
+   included — it never needed the backend. The streak was built here and cut —
+   see the design rules.
 
 ---
 
@@ -915,10 +932,11 @@ sells the flight, not the habit; the world is the reason to come back.
 
 ## Spec gaps to resolve before the ghost backend
 
-**Nothing serves the percentile.** The share card wants "Top 12% today", but `/day` is
-aggressively edge-cached, `/ghosts` is a trail bundle, and the flight beacon has no
-specified response. Cheapest fix: return the percentile from the flight POST. Otherwise
-ship a coarse distance histogram inside the ghost bundle and compute it client-side.
+~~**Nothing serves the percentile.**~~ Resolved, and by nothing: `/api/world` was
+already returning up to 400 resting points and each one already carried its flight's
+distance, so the client had the day's distribution in hand the whole time and was
+throwing it away. No new endpoint, no new storage — a sort and a binary search in
+`src/game/standing.ts`.
 
 ~~**Refresh reconciliation contradicts the persistence table.**~~ Resolved: the
 in-flight marker exists — world plus distance-so-far, refreshed every two seconds
