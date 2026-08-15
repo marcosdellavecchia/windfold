@@ -1,6 +1,6 @@
 import { useMemo, useRef } from 'react'
-import { useFrame } from '@react-three/fiber'
-import { BackSide, Color, ShaderMaterial, Vector2, Vector3 } from 'three'
+import { useFrame, useThree } from '@react-three/fiber'
+import { BackSide, Color, Mesh, ShaderMaterial, Vector2, Vector3 } from 'three'
 import type { World } from '../sim/world'
 import { rgbToHex } from '../sim/palette'
 import { AIR_FOG_GLSL, AIR_FOG_UNIFORMS } from './atmosphere'
@@ -303,13 +303,24 @@ export function Sky({ world }: { world: World }) {
   }, [world])
 
   const clock = useRef(0)
+  const meshRef = useRef<Mesh>(null)
+  const camera = useThree((s) => s.camera)
   useFrame((_, dt) => {
     clock.current += Math.min(dt, 0.1)
     material.uniforms.uTime.value = clock.current
+    // The dome rides with the camera. It looks like a detail and is not: the
+    // shader reads its direction from the *dome's* centre, so a dome nailed to
+    // the origin puts the sun somewhere else the moment you fly away from it —
+    // and the map is 12 km across against a 9 km dome, so "somewhere else" is
+    // tens of degrees. That is how you end up with two suns: this one, and the
+    // lens flare's, which projects the real sun direction from the eye and is
+    // therefore right. Centre the sphere on the camera and the two agree by
+    // construction, as do the moon, the halo and the horizon haze.
+    meshRef.current?.position.copy(camera.position)
   })
 
   return (
-    <mesh material={material} frustumCulled={false} renderOrder={-1}>
+    <mesh ref={meshRef} material={material} frustumCulled={false} renderOrder={-1}>
       <sphereGeometry args={[9000, 32, 16]} />
     </mesh>
   )
