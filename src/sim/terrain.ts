@@ -566,7 +566,7 @@ export function generateHeightfield(biome: BiomeId, rng: Rng): Heightfield {
 
   const hasWater = shape.waterFrac > 0
   const waterLevel = hasWater ? min + (max - min) * shape.waterFrac : min - 1
-  const { wet, flowTo } = computeDrainage(data, n, min, max, waterLevel)
+  const { wet, flowTo } = computeDrainage(data, n, waterLevel, hasWater)
 
   return {
     size: WORLD_SIZE, seg, cell, data, min, max, waterLevel, hasWater,
@@ -574,8 +574,173 @@ export function generateHeightfield(biome: BiomeId, rng: Rng): Heightfield {
   }
 }
 
-/** Buckets for the ordering pass below. At 800 m of relief each is about 20 cm. */
-const DRAIN_BUCKETS = 4096
+/**
+ * Slope left on a filled basin's floor, per cell, so water crosses it rather than
+ * pooling in the middle of it. A millimetre of rise per 32 m step: it exists to
+ * break ties in one consistent direction, and even a thousand-cell flat comes to
+ * one metre of it, on a surface that is never drawn.
+ */
+const FILL_EPS = 1e-3
+
+/**
+ * How deep a hollow may be and still count as something water crosses.
+ *
+ * Filling every depression is the textbook answer and it is wrong here, twice
+ * over. The landforms build enclosed basins on purpose — a caldera, a glacial
+ * trough, the floor between two mesas — and the ribbon takes its height from the
+ * real ground, so a river routed through one is visibly climbing out of it:
+ * measured across six maps, a median climb of 2.5 to 12 m and a worst case of
+ * 182 m. And a filled basin's floor is dead flat, so the route across it is a
+ * straight line — which is exactly what the whole-map fill drew, kilometre-long
+ * canals running dead straight over ground with no valley in it.
+ *
+ * The cap separates the two kinds of hollow, and it bounds both faults at once,
+ * since neither can exceed the depth of the deepest thing water is allowed to
+ * cross. Below it are the accidents: the single cells and shallow dips fbm
+ * leaves everywhere, which is what was cutting the network into 84 pieces on an
+ * ordinary alpine day. Above it are the basins the map means to have, and a
+ * river arriving at one stops — which is what a river arriving at a closed basin
+ * does.
+ *
+ * 12 m from the pictures. Every value from 0.5 to infinity was drawn as a map of
+ * the finished network: under about 8 the litter is still there, over about 20
+ * the straight runs start, and the difference between them is one dendritic
+ * network per catchment either way.
+ */
+const MAX_FILL = 12
+
+/**
+ * The surface water is routed over: the ground with its pits filled to the level
+ * they would spill at.
+ *
+ * Flow accumulation needs somewhere for every cell to send its water, and the
+ * finished heightfield does not provide one. 0.6% of an alpine map's land cells
+ * are strict local minima — fbm leaves them everywhere and the settling pass
+ * fills only some — and a flow tree over that terrain is not one network but
+ * eight hundred of them, each ending the moment it reaches a hollow four cells
+ * wide. That is exactly what the map looked like: 84 separate watercourses, 62%
+ * of them shorter than 200 m, threads of river lying in the landscape with no
+ * source and no mouth.
+ *
+ * A real hollow that size does not stop a river. It fills, and then it spills at
+ * its lowest rim, and the river carries on. So: priority flood (Barnes et al.).
+ * Start from the outlets — the map border, and every cell already under the water
+ * plane — and grow inward, always from the lowest cell seen so far. Whatever is
+ * reached is raised to the level of the path that reached it, which is by
+ * construction the lowest rim between it and an outlet. A basin comes out as a
+ * flat at its spill height; open ground comes out untouched.
+ *
+ * The pop order is itself the map sorted by filled height, so it is kept and
+ * handed to the accumulation rather than sorting again — and unlike a bucketed
+ * sort it separates cells that differ only by FILL_EPS, which is the whole
+ * mechanism that gets water across a filled floor.
+ *
+ * Paint only, again, and worth being explicit about: this returns a second
+ * surface and never writes to `data`. The pits stay in the ground the aircraft
+ * flies over. Only the water knows they were filled.
+ */
+function routingSurface(
+  data: Float32Array,
+  n: number,
+  waterLevel: number,
+  hasWater: boolean,
+): { filled: Float64Array; order: Uint32Array; drowned: Uint8Array } {
+  const count = n * n
+  const filled = new Float64Array(count)
+  const order = new Uint32Array(count)
+  const seen = new Uint8Array(count)
+  /** Cells the fill had to raise more than MAX_FILL: the floor of a real basin. */
+  const drowned = new Uint8Array(count)
+
+  // Binary heap over (height, cell). One push and one pop per cell, so 147k of
+  // each at 17 comparisons — a fraction of the fbm that built the field.
+  const hk = new Float64Array(count + 1)
+  const hv = new Int32Array(count + 1)
+  let hn = 0
+  const push = (k: number, v: number) => {
+    let c = ++hn
+    hk[c] = k
+    hv[c] = v
+    while (c > 1) {
+      const p = c >> 1
+      if (hk[p] <= hk[c]) break
+      const tk = hk[p], tv = hv[p]
+      hk[p] = hk[c]; hv[p] = hv[c]
+      hk[c] = tk; hv[c] = tv
+      c = p
+    }
+  }
+  const pop = (): number => {
+    const top = hv[1]
+    hk[1] = hk[hn]
+    hv[1] = hv[hn]
+    hn--
+    let p = 1
+    for (;;) {
+      const l = p << 1
+      if (l > hn) break
+      const r = l + 1
+      const c = r <= hn && hk[r] < hk[l] ? r : l
+      if (hk[p] <= hk[c]) break
+      const tk = hk[p], tv = hv[p]
+      hk[p] = hk[c]; hv[p] = hv[c]
+      hk[c] = tk; hv[c] = tv
+      p = c
+    }
+    return top
+  }
+
+  const seed = (i: number) => {
+    if (seen[i]) return
+    seen[i] = 1
+    filled[i] = data[i]
+    push(data[i], i)
+  }
+  // The rim of the map, which every map has: `borderMask` takes the outer seventh
+  // down to a twelfth of its height, so the edge is a low lip and not a wall.
+  for (let ix = 0; ix < n; ix++) {
+    seed(ix)
+    seed((n - 1) * n + ix)
+  }
+  for (let iz = 0; iz < n; iz++) {
+    seed(iz * n)
+    seed(iz * n + n - 1)
+  }
+  // And the sea, which is the outlet that actually matters on the maps that have
+  // one. Without it a coastal river would fill its estuary and spill sideways
+  // along the shore looking for the map edge.
+  if (hasWater) {
+    for (let i = 0; i < count; i++) if (data[i] <= waterLevel) seed(i)
+  }
+
+  // Descending, because that is the direction the accumulation walks.
+  let k = count
+  while (hn > 0) {
+    const i = pop()
+    order[--k] = i
+    const ix = i % n
+    const iz = (i / n) | 0
+    const lift = filled[i] + FILL_EPS
+    for (let dz = -1; dz <= 1; dz++) {
+      const jz = iz + dz
+      if (jz < 0 || jz >= n) continue
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dz === 0) continue
+        const jx = ix + dx
+        if (jx < 0 || jx >= n) continue
+        const j = jz * n + jx
+        if (seen[j]) continue
+        seen[j] = 1
+        filled[j] = data[j] > lift ? data[j] : lift
+        if (filled[j] - data[j] > MAX_FILL) drowned[j] = 1
+        push(filled[j], j)
+      }
+    }
+  }
+
+  return { filled, order, drowned }
+}
+
 /**
  * What fraction of a map carries a visible thread, and what fraction carries a
  * full one — as fractions rather than as flow values, because the flow itself is
@@ -606,13 +771,12 @@ const DRAIN_FULL = 0.999
  * the map from its highest cell to its lowest, and hand each cell's total to its
  * steepest downhill neighbour. What accumulates is drainage: threads that converge,
  * that follow the valleys the terrain actually has, and that appear on every biome
- * and every landform without any of them knowing about it. Cells with no lower
- * neighbour keep what they were given, which is what a basin with no outlet does.
+ * and every landform without any of them knowing about it.
  *
- * The ordering is a counting sort rather than a comparison sort: 147k cells at
- * O(n log n) with a comparator callback costs more than the accumulation it exists
- * to enable. Two cells inside the same 20 cm bucket may be handled out of order,
- * which loses a little flow at that pair and is invisible by construction.
+ * The walk runs over the filled surface rather than the ground — see
+ * `routingSurface` — so a shallow hollow no longer stops a river, and a network
+ * runs from its springs to the sea, the map edge, or a basin the map meant to
+ * have, rather than petering out four cells down a hillside.
  *
  * Paint only. Nothing here touches a height, so it cannot move the flight model —
  * the one thing carving a real riverbed would certainly have done.
@@ -620,46 +784,22 @@ const DRAIN_FULL = 0.999
 function computeDrainage(
   data: Float32Array,
   n: number,
-  min: number,
-  max: number,
   waterLevel: number,
+  hasWater: boolean,
 ): { wet: Float32Array; flowTo: Int32Array } {
   const count = n * n
-  const span = Math.max(max - min, 1e-6)
-  const scale = (DRAIN_BUCKETS - 1) / span
-
-  // Counting sort into descending height order.
-  const counts = new Uint32Array(DRAIN_BUCKETS + 1)
-  for (let i = 0; i < count; i++) {
-    // Inverted, so bucket 0 holds the highest ground and the walk runs downhill.
-    counts[DRAIN_BUCKETS - 1 - (((data[i] - min) * scale) | 0)]++
-  }
-  let running = 0
-  for (let b = 0; b < DRAIN_BUCKETS; b++) {
-    const c = counts[b]
-    counts[b] = running
-    running += c
-  }
-  const order = new Uint32Array(count)
-  for (let i = 0; i < count; i++) {
-    order[counts[DRAIN_BUCKETS - 1 - (((data[i] - min) * scale) | 0)]++] = i
-  }
+  const { filled, order, drowned } = routingSurface(data, n, waterLevel, hasWater)
 
   // Position of each cell in that walk, which is what makes flats drainable.
   //
-  // Accumulating only into strictly lower neighbours sounds right and does not
-  // work: fbm at 32 m cells is full of local minima, and the settling flattens
-  // more of them. Measured, 2.5% of an alpine map is a pit and 40.7% of a field
-  // one is — so flow stopped almost as soon as it started and the network came
-  // out as thousands of separate puddles rather than anything that joined up.
-  //
-  // Proper depression filling wants a priority queue and another pass. It is not
-  // needed here, because the walk order already *is* a height ordering: handing
-  // flow to any neighbour that comes later in it can never form a cycle, and on
-  // flat ground later means lower-or-equal. So a cell drains to the best of its
-  // later neighbours — steepest descent wherever a real slope exists, and simply
-  // onward across a flat where none does. A basin ringed entirely by higher
-  // ground still keeps what it was given, which is what a basin does.
+  // Accumulating only into strictly lower neighbours does not work: a filled
+  // basin's floor is flat by construction, and fbm leaves plenty of flats of its
+  // own. But the walk order already *is* a height ordering, so handing flow to
+  // any neighbour that comes later in it can never form a cycle, and on flat
+  // ground later means lower-or-equal. So a cell drains to the best of its later
+  // neighbours — steepest descent wherever a real slope exists, and onward across
+  // a flat where none does, which on a filled floor means toward the spill,
+  // since that is the direction FILL_EPS slopes it.
   const rank = new Uint32Array(count)
   for (let k = 0; k < count; k++) rank[order[k]] = k
 
@@ -668,9 +808,13 @@ function computeDrainage(
   const diag = 1 / Math.SQRT2
   for (let k = 0; k < count; k++) {
     const i = order[k]
+    // Water arriving under a real basin's rim stays there. It keeps the flow it
+    // was handed — that is what a lake is — and the river above it ends on the
+    // shoreline the basin would have, rather than at an arbitrary cell.
+    if (drowned[i]) continue
     const ix = i % n
     const iz = (i / n) | 0
-    const h = data[i]
+    const h = filled[i]
     let bestIdx = -1
     let bestScore = -Infinity
     // Eight neighbours, because four makes water run in staircases along the grid
@@ -686,7 +830,7 @@ function computeDrainage(
         if (rank[j] <= k) continue
         // Per unit distance, so a diagonal has to be steeper to win — otherwise
         // every flow leaves at 45 degrees, which is the same staircase again.
-        const score = (h - data[j]) * (dx !== 0 && dz !== 0 ? diag : 1)
+        const score = (h - filled[j]) * (dx !== 0 && dz !== 0 ? diag : 1)
         if (score > bestScore) {
           bestScore = score
           bestIdx = j

@@ -40,6 +40,21 @@ import { TONEMAP_GLSL } from './grade'
 
 /** Flow below this is a damp seam and not a stream; the terrain paint has it. */
 const CHANNEL = 0.5
+/**
+ * Shortest watercourse worth drawing, end to end, in metres.
+ *
+ * The drainage comes out as a set of separate networks — one per catchment that
+ * reaches the sea, the map edge or a closed basin — and most of them are trunks
+ * with tributaries. A few are not: a catchment can cross the flow threshold a
+ * couple of cells before it arrives at a basin, and what gets drawn is a hundred
+ * metres of river lying in the landscape with no source and no mouth. That reads
+ * as a mistake from the air, because it is one.
+ *
+ * Ten cells. Below that there is not enough length to see a direction in, and the
+ * terrain's damp paint still marks the valley, so the ground does not go dry —
+ * it just stops claiming there is a river in it.
+ */
+const MIN_LENGTH = 320
 /** Metres across, at the threshold and at full flow. */
 const WIDTH_MIN = 7
 const WIDTH_MAX = 22
@@ -127,13 +142,59 @@ export function Streams({ world }: { world: World }) {
     let pz = new Float32Array(count)
     let qx = new Float32Array(count)
     let qz = new Float32Array(count)
+    // Every channel cell, grouped into networks, with anything too short to be a
+    // river dropped before a single vertex is built for it.
+    //
+    // A network is found by walking downstream and keeping the last cell reached
+    // — cheap here because the walk is bounded: `flowTo` is a tree with no cycles
+    // by construction, and the path memoises, so this is linear overall.
+    const mouth = new Int32Array(count).fill(-1)
+    const outletOf = (i: number): number => {
+      let a = i
+      const path: number[] = []
+      while (mouth[a] < 0) {
+        const d = hf.flowTo[a]
+        if (!isChannel(a) || d < 0) break
+        path.push(a)
+        a = d
+      }
+      const end = mouth[a] >= 0 ? mouth[a] : a
+      for (const p of path) mouth[p] = end
+      return end
+    }
+    const stretch = (i: number) =>
+      Math.hypot((i % n) - (hf.flowTo[i] % n), ((i / n) | 0) - ((hf.flowTo[i] / n) | 0)) * hf.cell
+    // Length along the longest single thread of each network — its trunk — rather
+    // than the sum of every branch in it. A hundred short tributaries adding up
+    // to a kilometre is still a hundred short tributaries.
+    const trunk = new Map<number, number>()
+    const runTo = new Float32Array(count)
+    const channels: number[] = []
+    for (let i = 0; i < count; i++) if (isChannel(i)) channels.push(i)
+    // Springs first and confluences only once both tributaries have arrived, so
+    // each cell's run is final before anything downstream reads it. `wet` looks
+    // like it would order this and does not: it saturates, so every cell along a
+    // trunk carries the same 1.0 and their order would be arbitrary.
+    const waiting = new Int32Array(count)
+    for (const i of channels) if (isChannel(hf.flowTo[i])) waiting[hf.flowTo[i]]++
+    const queue = channels.filter((i) => waiting[i] === 0)
+    for (let q = 0; q < queue.length; q++) {
+      const i = queue[q]
+      const d = hf.flowTo[i]
+      const run = runTo[i] + stretch(i)
+      if (run > runTo[d]) runTo[d] = run
+      const m = outletOf(i)
+      if (run > (trunk.get(m) ?? 0)) trunk.set(m, run)
+      if (isChannel(d) && --waiting[d] === 0) queue.push(d)
+    }
+
     const touched: number[] = []
     const mark = (i: number) => {
       px[i] = -half + (i % n) * hf.cell
       pz[i] = -half + ((i / n) | 0) * hf.cell
     }
-    for (let i = 0; i < count; i++) {
-      if (!isChannel(i)) continue
+    for (const i of channels) {
+      if ((trunk.get(outletOf(i)) ?? 0) < MIN_LENGTH) continue
       touched.push(i)
       mark(i)
       mark(hf.flowTo[i])
