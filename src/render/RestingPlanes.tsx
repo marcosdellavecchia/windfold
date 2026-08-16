@@ -54,14 +54,29 @@ const LABELS = 6
  * plane. The name sits on the first line and a wrapped note on the two below;
  * the height is fixed whether or not there is a note, because a pooled label
  * is reused for whichever dart it lands on next.
+ *
+ * Sized up from the first cut, which was legible standing still and not while
+ * moving — the arithmetic is unkind. A 28 px note on a 170 px label mapped to
+ * 8 m of world subtends about seven screen pixels at 150 m, and seven pixels
+ * sliding across the frame at 22 m/s is not reading, it is guessing. The name
+ * carries 46/190 of the height and the note 34/190, so the note gained half
+ * again on top of what the whole label gained.
  */
-const LABEL_W = 512
-const LABEL_H = 170
-const M_PER_PX = 4.5 / 96
+const LABEL_W = 560
+const LABEL_H = 190
+const M_PER_PX = 5.6 / 96
+const NAME_PX = 46
+const NOTE_PX = 34
+/** The step-down that rescues a line of unusually wide characters. */
+const NOTE_PX_MIN = 29
+/** Baselines down the canvas: name, then up to two note lines. */
+const NAME_Y = 50
+const NOTE_Y = 118
+const NOTE_LEAD = 42
 /** Text width the note wraps inside, leaving the canvas a margin either side. */
-const NOTE_W = 470
-/** Lifts the *name* to the height it has always sat at, note or no note. */
-const LABEL_LIFT = 7.1
+const NOTE_W = 520
+/** Lifts the *name* clear of the dart, note or no note. */
+const LABEL_LIFT = 7.6
 /**
  * Labels fade in inside this range of the camera, metres. Far enough that a
  * label is readable *ahead* of a low pass, not only directly underneath —
@@ -98,6 +113,11 @@ interface PlacedRest {
 
 export function RestingPlanes({ world, rests }: { world: World; rests: RestPoint[] | null }) {
   const camera = useThree((s) => s.camera)
+  // Anisotropy matters as much as size for this text. A label is a flat plane
+  // read at a glancing angle from a moving camera, which is precisely the case
+  // trilinear filtering handles worst — it picks a mip for the *worst* axis and
+  // smears the other one, so a note softens exactly as you close on it.
+  const maxAniso = useThree((s) => s.gl.capabilities.getMaxAnisotropy())
 
   const built = useMemo(() => {
     const restMat = new MeshLambertMaterial({ vertexColors: true, side: 2 })
@@ -110,11 +130,13 @@ export function RestingPlanes({ world, rests }: { world: World; rests: RestPoint
 
     const group = new Group()
     group.add(mesh)
-    const labels = Array.from({ length: LABELS }, () => makeLabel())
+    const labels = Array.from({ length: LABELS }, () => makeLabel(maxAniso))
     for (const l of labels) group.add(l.sprite)
 
     return { mesh, group, labels }
-  }, [])
+    // maxAniso is a fixed property of the GPU, so this still builds exactly
+    // once — it is in the deps because it is read, not because it changes.
+  }, [maxAniso])
 
   useEffect(
     () => () => {
@@ -237,11 +259,12 @@ interface Label {
   key: string
 }
 
-function makeLabel(): Label {
+function makeLabel(maxAniso: number): Label {
   const canvas = document.createElement('canvas')
   canvas.width = LABEL_W
   canvas.height = LABEL_H
   const texture = new CanvasTexture(canvas)
+  texture.anisotropy = maxAniso
   const material = new MeshBasicMaterial({
     map: texture,
     transparent: true,
@@ -312,25 +335,29 @@ function drawLabel(l: Label, p: PlacedRest) {
   ctx.textBaseline = 'middle'
   ctx.shadowColor = 'rgba(0, 0, 0, 0.55)'
   ctx.shadowBlur = 10
-  ctx.font = '600 40px ui-sans-serif, system-ui, sans-serif'
+  ctx.font = `600 ${NAME_PX}px ui-sans-serif, system-ui, sans-serif`
   ctx.fillStyle = 'rgba(255, 255, 255, 0.95)'
-  ctx.fillText(text, LABEL_W / 2, 44, 500)
+  ctx.fillText(text, LABEL_W / 2, NAME_Y, LABEL_W - 40)
 
   // The pilot's own words, dimmer and lighter than the sign above them —
   // quoted and italic, because it is someone speaking rather than a readout.
   if (p.note) {
     const quoted = `“${p.note}”`
     let lines: string[] = []
-    // Two passes at most. 28px is the size that reads; the step down rescues
-    // the rare line of very wide characters that two lines cannot hold, which
-    // `fillText`'s maxWidth would otherwise squash flat rather than shrink.
-    for (const size of [28, 24]) {
+    // Two passes at most. The step down rescues the rare line of very wide
+    // characters that two lines cannot hold, which `fillText`'s maxWidth would
+    // otherwise squash flat rather than shrink.
+    for (const size of [NOTE_PX, NOTE_PX_MIN]) {
       ctx.font = `italic 400 ${size}px ui-sans-serif, system-ui, sans-serif`
       lines = wrap(ctx, quoted, NOTE_W, 2)
       if (lines.every((l) => ctx.measureText(l).width <= NOTE_W)) break
     }
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.8)'
-    for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], LABEL_W / 2, 104 + i * 36, NOTE_W + 10)
+    // Brighter than the first cut: the note is the half that was hard to read,
+    // and dimming it to mark it as secondary was costing more than it bought.
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.9)'
+    for (let i = 0; i < lines.length; i++) {
+      ctx.fillText(lines[i], LABEL_W / 2, NOTE_Y + i * NOTE_LEAD, NOTE_W + 10)
+    }
   }
   l.texture.needsUpdate = true
 }
