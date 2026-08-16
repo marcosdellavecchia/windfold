@@ -1,6 +1,6 @@
 /**
- * The one gate every piece of player-typed text passes through, shared by both
- * edge functions so there is exactly one list to argue about.
+ * The one gate every piece of player-supplied data passes through, shared by
+ * all three edge functions so there is exactly one list to argue about.
  *
  * The game has no accounts, so it can never ban anybody — which means the only
  * moderation available is at the moment of writing. Both cleaners are therefore
@@ -10,6 +10,26 @@
  * removes every URL, handle and phone number in one move, and takes most
  * leetspeak evasion with it.
  */
+
+/** Half the world's extent. Anything claiming to be outside it is not a flight. */
+export const HALF_WORLD = 6144
+
+/** A resting point the client claims: finite, and inside the world. */
+export function plausiblePoint(x: unknown, z: unknown): boolean {
+  return (
+    typeof x === 'number' && Number.isFinite(x) && Math.abs(x) <= HALF_WORLD &&
+    typeof z === 'number' && Number.isFinite(z) && Math.abs(z) <= HALF_WORLD
+  )
+}
+
+/**
+ * The key a note hangs on: the resting point it was written about, rounded to
+ * the metre. Both sides must round identically or a note never finds its dart,
+ * so the rounding lives here and nowhere else.
+ */
+export function restKey(x: number, z: number): string {
+  return `${Math.round(x)},${Math.round(z)}`
+}
 
 /**
  * Deliberately short and unambiguous. Over-blocking a "Raccoon" is a cost

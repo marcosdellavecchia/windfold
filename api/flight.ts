@@ -8,11 +8,9 @@
  * plausibility check is the whole anti-cheat, exactly as the design doc says:
  * Wordle survived fine and so will this.
  */
-import { cleanName } from './_clean'
+import { cleanName, HALF_WORLD } from './_clean'
 
 export const config = { runtime: 'edge' }
-
-const HALF_WORLD = 6144
 
 /** No honest flight is this long; see the harness distribution. */
 const MAX_DISTANCE = 30000

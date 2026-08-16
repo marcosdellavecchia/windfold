@@ -39,17 +39,20 @@ export default async function handler(req: Request): Promise<Response> {
       }
     }
 
-    // Newest first out of the list, so the first entry for a call sign is that
-    // pilot's current word and every older one it shadows is skipped.
+    // Keyed by the resting point the note was written about, "x,z". Newest
+    // first out of the list, so the first entry for a point is that flight's
+    // current word and every older one it shadows is skipped.
     const notes: Record<string, string> = {}
     if (Array.isArray(tRes?.result)) {
       for (const item of tRes.result as string[]) {
         const raw = String(item)
-        const c = raw.indexOf(',')
-        if (c <= 0) continue
-        const name = raw.slice(0, c)
-        if (name in notes) continue
-        notes[name] = raw.slice(c + 1)
+        const c1 = raw.indexOf(',')
+        const c2 = c1 < 0 ? -1 : raw.indexOf(',', c1 + 1)
+        if (c2 < 0) continue
+        const key = raw.slice(0, c2)
+        const text = raw.slice(c2 + 1)
+        if (!text || key in notes) continue
+        notes[key] = text
       }
     }
 

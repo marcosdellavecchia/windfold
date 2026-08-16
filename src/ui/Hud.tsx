@@ -19,6 +19,7 @@ export function Hud({
   par,
   metresFlown,
   pool,
+  lastRest,
   onNote,
 }: {
   world: World
@@ -26,8 +27,10 @@ export function Hud({
   metresFlown: number
   /** Today's other flights, sorted, for the standing line. */
   pool: number[]
+  /** Where the last scored flight came to rest — the paper a note is left on. */
+  lastRest: { x: number; z: number } | null
   /** A word just written, so your own paper carries it without a round trip. */
-  onNote?: (name: string, text: string) => void
+  onNote?: (x: number, z: number, text: string) => void
 }) {
   const s = useHud()
   const pct = percentileOf(s.best, pool)
@@ -135,8 +138,9 @@ export function Hud({
           {/* The word left with the paper. Only here, never on the ramp: it is
               something you write about a flight that happened, not a status you
               set before one — and this whole block unmounts on the next launch,
-              which is what makes every flight ask from empty. */}
-          <Note day={world.day} onNote={onNote} />
+              which is what makes every flight ask from empty. Absent for a
+              turbo run, which leaves no paper anywhere to write on. */}
+          {lastRest && !s.cheated && <Note day={world.day} rest={lastRest} onNote={onNote} />}
         </div>
       )}
     </div>
@@ -194,14 +198,21 @@ function Signature() {
  * never a prompt, never a modal — and it stays a single quiet link until it is
  * clicked, so a first-time pilot can ignore it forever and most will.
  *
- * On the server it is one word per world, not per flight: the label pool
- * already shows a pilot's name once however many darts they left, and a note
- * that changed between them would be a lottery about which one you flew over.
- * Here it is asked fresh every time. Nothing is remembered between flights —
- * the line only reaches the world when it is confirmed, so a box pre-filled
- * with an earlier one would be promising a delivery it was not going to make.
+ * It belongs to the flight that just ended, and is addressed to the point
+ * where its paper came down — so a second message is a second dart's caption,
+ * not a rewrite of the first. Nothing is remembered between flights: the line
+ * only reaches the world when it is confirmed, so a box pre-filled with an
+ * earlier one would be promising a delivery it was not going to make.
  */
-function Note({ day, onNote }: { day: number; onNote?: (name: string, text: string) => void }) {
+function Note({
+  day,
+  rest,
+  onNote,
+}: {
+  day: number
+  rest: { x: number; z: number }
+  onNote?: (x: number, z: number, text: string) => void
+}) {
   const [text, setText] = useState('')
   const [editing, setEditing] = useState(false)
 
@@ -211,9 +222,8 @@ function Note({ day, onNote }: { day: number; onNote?: (name: string, text: stri
       setText(clean)
       setEditing(false)
       if (clean) {
-        const sign = callsign()
-        postNote(day, sign, clean)
-        onNote?.(sign, clean)
+        postNote(day, rest.x, rest.z, clean)
+        onNote?.(rest.x, rest.z, clean)
       }
     }
     return (

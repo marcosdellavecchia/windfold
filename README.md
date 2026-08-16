@@ -278,7 +278,7 @@ the bottom third.
 | Music on/off preference | `localStorage` | Until the user clears browser data |
 | Call sign (dealt or typed) | `localStorage` | Until the user clears browser data |
 | Resting point + metres per flight, anonymous aggregate per world | Redis (presence layer) | 14 days, then expired |
-| Call sign → the word that pilot left, per world | Redis (presence layer) | 14 days, then expired |
+| Resting point → the word left about the flight that ended there, per world | Redis (presence layer) | 14 days, then expired |
 | Best distance + attempt count + opaque per-day token (planned, ghost layer) | D1 | ~7 days, then purged |
 | Gzipped trail of the best flight (planned, ghost layer) | R2 | ~7 days, then purged |
 
@@ -300,12 +300,14 @@ nothing but anonymous aggregates:
 | --- | --- |
 | `POST /api/flight` | One beacon per finished flight: world, resting point, metres, landed, call sign. Plausibility-checked (and the sign letters-only, capped), fire-and-forget from the client. |
 | `POST /api/note` | The optional word a pilot leaves after a flight comes down. Separate call because it is typed seconds later and half of them are never typed at all — the beacon must not wait on it. Gated by `api/_clean`, fire-and-forget. |
-| `GET /api/world?id=N` | The world's presence: total metres flown, up to 400 resting points, and the notes indexed by call sign. Edge-cached a minute. |
+| `GET /api/world?id=N` | The world's presence: total metres flown, up to 400 resting points, and the notes indexed by resting point. Edge-cached a minute. |
 
 Per world: one distance counter, a capped list (600) of resting points, and a
-capped list (400) of notes, all expiring after 14 days. Notes are keyed by call
-sign rather than by resting point, so rewriting simply pushes an entry that
-shadows the older one and the list ages itself out.
+capped list (400) of notes, all expiring after 14 days. Notes are keyed by the
+resting point they were written about, `"x,z"` rounded to the metre, so
+rewriting a point simply pushes an entry that shadows the older one and the list
+ages itself out. Both sides round through the same `restKey`, because a note
+that rounds differently from its dart never finds it.
 No token, no IP retained, nothing joinable — rule 5 holds
 because there is nothing to join. The client degrades to silence: offline, dev,
 or with no store configured, the game is exactly the solo game.
@@ -710,9 +712,18 @@ should.
 **A word for whoever finds it.** Under the sign, one optional line the pilot
 writes once the plane is down — "*so close, the ridge lied*" — carried on the
 label beneath the name, wrapped to two lines and readable only from a low pass.
-It is per world and per call sign rather than per flight: the label pool already
-thins a pilot's five crashes in one meadow down to one name, and a note that
-differed between their darts would be a lottery about which one you flew over.
+It belongs to a flight, addressed to the point where that flight's paper came
+down. The first cut keyed it by call sign instead — one word per pilot per world
+— reasoning that the label pool already thinned a pilot's five crashes in one
+meadow down to one name, so notes that differed between their darts would be a
+lottery about which one you flew over. Play disproved it in a minute: you meet a
+pilot's darts one at a time, not all at once, so there was never a lottery to
+protect against, only a second message silently rewriting the caption on the
+first one's paper. A note is *about* a flight — "so close", "the ridge lied" —
+and the flight is where it belongs. The label pool's dedupe moved with it: a
+bare dart still collapses to one per pilot, because five of those are one story
+repeated, but noted darts stay eligible up to two per pilot, so one prolific
+flyer cannot own every label in a valley.
 Three things make it work. It is asked for only on the results screen and never
 on the ramp, because it is a thing you say about a flight that happened, not a
 status you set before one — and it stays a single italic invitation until it is

@@ -62,7 +62,7 @@ function WorldVeil({ phase, onDone }: { phase: 'in' | 'out'; onDone: () => void 
 import { Canvas } from '@react-three/fiber'
 import { buildWorld, dayNumber } from './sim/world'
 import { computePar } from './sim/par'
-import { fetchPresence, type Presence, type RestPoint } from './game/net'
+import { fetchPresence, restKey, type Presence, type RestPoint } from './game/net'
 import { standingPool } from './game/standing'
 import { readGradeOverride } from './render/grade'
 
@@ -82,14 +82,16 @@ function mergePresence(local: Presence, server: Presence): Presence {
 }
 
 /**
- * Notes live keyed by call sign, not by resting point, so they are joined onto
- * the paper here — every dart a pilot left on this world carries their word,
- * and the label pool's one-label-per-name rule shows it exactly once.
+ * Notes live keyed by the resting point they were written about, so they are
+ * joined onto the paper here — each dart carries the word left about the
+ * flight that ended on it, and a pilot's second message does not rewrite the
+ * caption on their first one's paper.
  */
 function withNotes(p: Presence | null): RestPoint[] | null {
   if (!p) return null
+  if (!Object.keys(p.notes).length) return p.rests
   return p.rests.map((r) => {
-    const note = r.name ? p.notes[r.name] : undefined
+    const note = p.notes[restKey(r.x, r.z)]
     return note ? { ...r, note } : r
   })
 }
@@ -143,7 +145,14 @@ export default function App() {
 
   // Your own flight joins the drift immediately — waiting for a reload plus
   // the edge cache taught the first pilots on a world that nothing happened.
+  // Where the last scored flight came to rest. The results screen needs it to
+  // address a note, since a note now belongs to a flight rather than to a
+  // pilot. Only non-turbo flights report, so a turbo run cannot inherit the
+  // previous flight's paper — and the HUD hides the invitation for one anyway.
+  const [lastRest, setLastRest] = useState<{ x: number; z: number } | null>(null)
+
   const onFlightRested = useCallback((rest: RestPoint, distance: number) => {
+    setLastRest({ x: rest.x, z: rest.z })
     setPresence((p) => ({
       metres: (p?.metres ?? 0) + distance,
       rests: [...(p?.rests ?? []), rest],
@@ -154,11 +163,11 @@ export default function App() {
   // A word written on the results screen lands on your own paper straight
   // away, for the same reason the flight does: waiting on a round trip plus a
   // minute of edge cache reads as nothing having happened.
-  const onNote = useCallback((name: string, text: string) => {
+  const onNote = useCallback((x: number, z: number, text: string) => {
     setPresence((p) => ({
       metres: p?.metres ?? 0,
       rests: p?.rests ?? [],
-      notes: { ...(p?.notes ?? {}), [name]: text },
+      notes: { ...(p?.notes ?? {}), [restKey(x, z)]: text },
     }))
   }, [])
 
@@ -274,7 +283,14 @@ export default function App() {
       </Canvas>
       <div className="dream" aria-hidden="true" />
       {veil && <WorldVeil phase={veil.phase} onDone={veilDone} />}
-      <Hud world={world} par={par} metresFlown={presence?.metres ?? 0} pool={pool} onNote={onNote} />
+      <Hud
+        world={world}
+        par={par}
+        metresFlown={presence?.metres ?? 0}
+        pool={pool}
+        lastRest={lastRest}
+        onNote={onNote}
+      />
       <AudioToggle muted={music.muted} onToggle={music.toggle} />
       <TuningPanel day={day} onDay={changeDay} world={world} />
     </>

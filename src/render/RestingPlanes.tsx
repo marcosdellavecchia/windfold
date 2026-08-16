@@ -48,6 +48,8 @@ import { hudDraft } from '../state'
  */
 const MAX = 400
 const LABELS = 6
+/** Labels one pilot may hold at once, when their darts carry different words. */
+const NOTES_PER_NAME = 2
 
 /**
  * Label canvas, and the metres-per-pixel that turns it into a world-space
@@ -286,22 +288,31 @@ function makeLabel(maxAniso: number): Label {
 }
 
 function assignLabels(labels: Label[], placed: PlacedRest[], eye: Vector3, fwd: Vector3) {
-  // Nearest signed darts *ahead*, one label per pilot name — a pilot who
-  // crashed five times in one meadow is one story, not five overlapping ones.
-  // The forward test matters more than it looks: the nearest dart is usually
-  // the one just flown past, and a pool that prefers nearest fills itself
-  // with labels behind the camera, rendered perfectly where nobody looks.
+  // Nearest signed darts *ahead*. The forward test matters more than it looks:
+  // the nearest dart is usually the one just flown past, and a pool that
+  // prefers nearest fills itself with labels behind the camera, rendered
+  // perfectly where nobody looks.
   const byDist = placed
     .map((p) => ({ p, d: (p.x - eye.x) ** 2 + (p.z - eye.z) ** 2 }))
     .filter((e) => e.d < LABEL_FAR * LABEL_FAR)
     .filter((e) => (e.p.x - eye.x) * fwd.x + (e.p.z - eye.z) * fwd.z > 0)
     .sort((a, b) => a.d - b.d)
 
+  // How many labels one pilot may hold at once. A bare dart says only "this
+  // pilot was here", and five of those are one story repeated — so unsigned-by
+  // -content paper still collapses to one. A noted dart is a different thing
+  // said in a different place, and suppressing it would hide the content this
+  // whole feature exists for. But a pool of six is a small commons: a pilot who
+  // flew thirty times in one meadow would otherwise own every label in the
+  // valley, so even their notes stop at two and the field keeps reading as
+  // many people rather than one prolific one.
   const chosen: PlacedRest[] = []
-  const seen = new Set<string>()
+  const held = new Map<string, number>()
   for (const { p } of byDist) {
-    if (seen.has(p.name)) continue
-    seen.add(p.name)
+    const cap = p.note ? NOTES_PER_NAME : 1
+    const n = held.get(p.name) ?? 0
+    if (n >= cap) continue
+    held.set(p.name, n + 1)
     chosen.push(p)
     if (chosen.length >= labels.length) break
   }

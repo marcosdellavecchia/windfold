@@ -12,8 +12,18 @@ export interface RestPoint {
   name: string
   /** How far that flight flew, for the swoop-down reveal. */
   metres: number
-  /** The word this pilot left on this world, joined in from `Presence.notes`. */
+  /** The word left about *this* flight, joined in from `Presence.notes`. */
   note?: string
+}
+
+/**
+ * The key a note hangs on: its resting point, rounded to the metre. Local rest
+ * points carry raw floats straight off the simulation while anything that has
+ * been through the server is already integral, so both sides round here or a
+ * note never finds its own dart. Mirrors `restKey` in `api/_clean.ts`.
+ */
+export function restKey(x: number, z: number): string {
+  return `${Math.round(x)},${Math.round(z)}`
 }
 
 export interface Presence {
@@ -21,7 +31,7 @@ export interface Presence {
   metres: number
   /** Where planes came to rest — the world's drift of paper. */
   rests: RestPoint[]
-  /** Call sign → the word that pilot left here. One per sign, not per flight. */
+  /** `restKey(x, z)` → the word left about the flight that ended there. */
   notes: Record<string, string>
 }
 
@@ -56,14 +66,16 @@ export function postFlight(
 /**
  * The word left with the paper, sent when the pilot writes it rather than with
  * the flight — separate call, separate key, so a note can never disturb the
- * odometer the beacon already banked. Fire-and-forget like everything here.
+ * odometer the beacon already banked. Addressed by the resting point it is
+ * about, which is the same point the beacon just filed. Fire-and-forget like
+ * everything here.
  */
-export function postNote(world: number, name: string, text: string) {
+export function postNote(world: number, x: number, z: number, text: string) {
   try {
     void fetch('/api/note', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ w: world, n: name, t: text }),
+      body: JSON.stringify({ w: world, x: Math.round(x), z: Math.round(z), t: text }),
       keepalive: true,
     }).catch(() => {})
   } catch {

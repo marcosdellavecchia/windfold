@@ -7,14 +7,18 @@
  * later, on the results screen, and half of them never get typed at all. So it
  * is a second, rarer call that touches nothing the first one wrote.
  *
- * One note per call sign per world, not per flight: a pilot who crashed five
- * times in one meadow is one story, and the label pool already thins their
- * darts down to one name. Rewriting simply pushes a newer entry that shadows
- * the old one, and the list is capped and expiring like everything else here.
- * Call signs are not accounts (rule 5) — two pilots who roll the same sign
- * share the note, which is the honest cost of identity without authentication.
+ * One note per *flight*, keyed by the resting point it was written about. The
+ * first cut keyed it by call sign instead, on the theory that a pilot who
+ * crashed five times in one meadow is one story — and it was wrong in play:
+ * you meet a pilot's darts one at a time, not all at once, so there was no
+ * ambiguity to protect against, only a second message silently rewriting the
+ * caption on the first one's paper. A note is about a flight ("so close",
+ * "the ridge lied"), and the flight is where it belongs.
+ *
+ * Rewriting a point simply pushes a newer entry that shadows the old one, and
+ * the list is capped and expiring like everything else here.
  */
-import { cleanName, cleanNote } from './_clean'
+import { cleanNote, plausiblePoint, restKey } from './_clean'
 
 export const config = { runtime: 'edge' }
 
@@ -24,30 +28,28 @@ const TTL_S = 14 * 86400
 export default async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') return new Response('method', { status: 405 })
 
-  let body: { w?: number; n?: string; t?: string }
+  let body: { w?: number; x?: number; z?: number; t?: string }
   try {
     body = await req.json()
   } catch {
     return new Response('body', { status: 400 })
   }
 
-  const { w } = body
+  const { w, x, z } = body
   if (typeof w !== 'number' || !Number.isFinite(w) || !Number.isInteger(w)) {
     return new Response('world', { status: 400 })
   }
+  if (!plausiblePoint(x, z)) return new Response('implausible', { status: 400 })
 
-  const name = cleanName(body.n)
+  // A note the gate emptied out is a silent no-op by design — the writer is
+  // not told which word offended, because that is a guessing game with a prize.
   const text = cleanNote(body.t)
-  // A note is a signature's companion; unsigned paper has nothing to hang it
-  // on. A note that the gate emptied out is a silent no-op by design — the
-  // writer is not told which word offended, because that is a guessing game
-  // with a prize.
-  if (!name || !text) return new Response('ok')
+  if (!text) return new Response('ok')
 
-  // The name is letters and spaces, so the first comma is unambiguously the
-  // separator and the note may keep its own commas.
+  // The key is two integers, so the second comma is unambiguously the end of
+  // it and the note may keep its own commas.
   const ok = await redis([
-    ['LPUSH', `w:${w}:t`, `${name},${text}`],
+    ['LPUSH', `w:${w}:t`, `${restKey(x as number, z as number)},${text}`],
     ['LTRIM', `w:${w}:t`, '0', String(NOTE_CAP - 1)],
     ['EXPIRE', `w:${w}:t`, String(TTL_S)],
   ])
