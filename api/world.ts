@@ -1,7 +1,7 @@
 /**
- * A world's presence: total metres flown on it, and where planes came to rest.
- * Read on world load; briefly cacheable at the edge because the numbers only
- * need to feel alive, not be exact.
+ * A world's presence: total metres flown on it, where planes came to rest, and
+ * the words their pilots left with them. Read on world load; briefly cacheable
+ * at the edge because the numbers only need to feel alive, not be exact.
  */
 export const config = { runtime: 'edge' }
 
@@ -20,10 +20,11 @@ export default async function handler(req: Request): Promise<Response> {
       body: JSON.stringify([
         ['GET', `w:${id}:m`],
         ['LRANGE', `w:${id}:r`, '0', '399'],
+        ['LRANGE', `w:${id}:t`, '0', '399'],
       ]),
     })
     if (!r.ok) return new Response('storage', { status: 503 })
-    const [mRes, rRes] = (await r.json()) as Array<{ result: unknown }>
+    const [mRes, rRes, tRes] = (await r.json()) as Array<{ result: unknown }>
 
     const m = Number(mRes.result ?? 0) || 0
     const rests: Array<[number, number, number, string, number]> = []
@@ -38,7 +39,21 @@ export default async function handler(req: Request): Promise<Response> {
       }
     }
 
-    return new Response(JSON.stringify({ m, rests }), {
+    // Newest first out of the list, so the first entry for a call sign is that
+    // pilot's current word and every older one it shadows is skipped.
+    const notes: Record<string, string> = {}
+    if (Array.isArray(tRes?.result)) {
+      for (const item of tRes.result as string[]) {
+        const raw = String(item)
+        const c = raw.indexOf(',')
+        if (c <= 0) continue
+        const name = raw.slice(0, c)
+        if (name in notes) continue
+        notes[name] = raw.slice(c + 1)
+      }
+    }
+
+    return new Response(JSON.stringify({ m, rests, notes }), {
       headers: {
         'content-type': 'application/json',
         'cache-control': 's-maxage=60, stale-while-revalidate=300',

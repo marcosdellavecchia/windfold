@@ -12,6 +12,8 @@ export interface RestPoint {
   name: string
   /** How far that flight flew, for the swoop-down reveal. */
   metres: number
+  /** The word this pilot left on this world, joined in from `Presence.notes`. */
+  note?: string
 }
 
 export interface Presence {
@@ -19,6 +21,8 @@ export interface Presence {
   metres: number
   /** Where planes came to rest — the world's drift of paper. */
   rests: RestPoint[]
+  /** Call sign → the word that pilot left here. One per sign, not per flight. */
+  notes: Record<string, string>
 }
 
 /** Fire-and-forget: one beacon per finished flight. */
@@ -49,14 +53,44 @@ export function postFlight(
   }
 }
 
+/**
+ * The word left with the paper, sent when the pilot writes it rather than with
+ * the flight — separate call, separate key, so a note can never disturb the
+ * odometer the beacon already banked. Fire-and-forget like everything here.
+ */
+export function postNote(world: number, name: string, text: string) {
+  try {
+    void fetch('/api/note', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ w: world, n: name, t: text }),
+      keepalive: true,
+    }).catch(() => {})
+  } catch {
+    /* offline, blocked, absent: all fine */
+  }
+}
+
 export async function fetchPresence(world: number): Promise<Presence | null> {
   try {
     const r = await fetch(`/api/world?id=${world}`)
     if (!r.ok) return null
-    const data = (await r.json()) as { m: number; rests: Array<[number, number, number, string?, number?]> }
+    const data = (await r.json()) as {
+      m: number
+      rests: Array<[number, number, number, string?, number?]>
+      notes?: Record<string, string>
+    }
     if (typeof data.m !== 'number' || !Array.isArray(data.rests)) return null
+    const notes: Record<string, string> = {}
+    // Worlds written before notes existed simply have none.
+    if (data.notes && typeof data.notes === 'object') {
+      for (const [name, text] of Object.entries(data.notes)) {
+        if (typeof text === 'string' && text) notes[name] = text
+      }
+    }
     return {
       metres: data.m,
+      notes,
       rests: data.rests
         .filter((p) => Array.isArray(p) && Number.isFinite(p[0]) && Number.isFinite(p[1]))
         .map(([x, z, l, n, d]) => ({

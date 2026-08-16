@@ -278,6 +278,7 @@ the bottom third.
 | Music on/off preference | `localStorage` | Until the user clears browser data |
 | Call sign (dealt or typed) | `localStorage` | Until the user clears browser data |
 | Resting point + metres per flight, anonymous aggregate per world | Redis (presence layer) | 14 days, then expired |
+| Call sign → the word that pilot left, per world | Redis (presence layer) | 14 days, then expired |
 | Best distance + attempt count + opaque per-day token (planned, ghost layer) | D1 | ~7 days, then purged |
 | Gzipped trail of the best flight (planned, ghost layer) | R2 | ~7 days, then purged |
 
@@ -298,10 +299,14 @@ nothing but anonymous aggregates:
 | Endpoint | Purpose |
 | --- | --- |
 | `POST /api/flight` | One beacon per finished flight: world, resting point, metres, landed, call sign. Plausibility-checked (and the sign letters-only, capped), fire-and-forget from the client. |
-| `GET /api/world?id=N` | The world's presence: total metres flown, and up to 400 resting points. Edge-cached a minute. |
+| `POST /api/note` | The optional word a pilot leaves after a flight comes down. Separate call because it is typed seconds later and half of them are never typed at all — the beacon must not wait on it. Gated by `api/_clean`, fire-and-forget. |
+| `GET /api/world?id=N` | The world's presence: total metres flown, up to 400 resting points, and the notes indexed by call sign. Edge-cached a minute. |
 
-Per world: one distance counter and a capped list (600) of resting points, both
-expiring after 14 days. No token, no IP retained, nothing joinable — rule 5 holds
+Per world: one distance counter, a capped list (600) of resting points, and a
+capped list (400) of notes, all expiring after 14 days. Notes are keyed by call
+sign rather than by resting point, so rewriting simply pushes an entry that
+shadows the older one and the list ages itself out.
+No token, no IP retained, nothing joinable — rule 5 holds
 because there is nothing to join. The client degrades to silence: offline, dev,
 or with no store configured, the game is exactly the solo game.
 
@@ -701,6 +706,34 @@ rendered perfectly where nobody looks — so candidates are filtered to the
 forward hemisphere first. Every piece of paper on the ground is a small story
 you have to descend to read. Older, unsigned paper stays anonymous, as it
 should.
+
+**A word for whoever finds it.** Under the sign, one optional line the pilot
+writes once the plane is down — "*so close, the ridge lied*" — carried on the
+label beneath the name, wrapped to two lines and readable only from a low pass.
+It is per world and per call sign rather than per flight: the label pool already
+thins a pilot's five crashes in one meadow down to one name, and a note that
+differed between their darts would be a lottery about which one you flew over.
+Three things make it work. It is asked for only on the results screen and never
+on the ramp, because it is a thing you say about a flight that happened, not a
+status you set before one — and it stays a single italic invitation until it is
+clicked, so rule 7 survives. Nothing is remembered between flights, unlike the
+call sign: the first build kept the last note in `localStorage` and the bug was
+immediate — after a refresh the screen showed a line it had no intention of
+sending, because a note only reaches the world when it is *confirmed*, so the
+next flight's paper went out bare while the HUD claimed otherwise. Every
+results screen now asks from empty. It rides its own endpoint, not the beacon:
+the beacon carries the shared odometer and must fire the instant the plane
+stops, and a note typed seconds later must never be able to delay or duplicate
+it. And the gate is the whole moderation story, because a game with no accounts
+can never ban anyone — letters, spaces and `,'!?-`, forty-eight characters,
+which between them leave no way to write a URL, a handle or a phone number,
+plus the same blocklist the call signs use. Shouting is answered rather than
+refused: a line in capitals is lowercased, not rejected. A note that fails the
+gate is a silent no-op, because telling a writer which word offended is a
+guessing game with a prize. Labels now also fade back *out* inside 60 m, which
+the second line forced — the results camera parks 46 m behind the dart that
+just landed, and two lines of white text were painting straight through the
+distance you are there to read.
 
 **Own ghosts.** The client half of the ghost system is in: every finished attempt
 stays on screen as a faint white line, the last five plus the personal best, which

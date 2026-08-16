@@ -4,6 +4,8 @@ import type { World } from '../sim/world'
 import { recordOf, savedState } from '../game/persist'
 import { copyCard, shareCard } from '../game/share'
 import { callsign, rerollCallsign, setCallsign } from '../game/callsign'
+import { cleanNote, NOTE_MAX } from '../game/note'
+import { postNote } from '../game/net'
 import { percentileOf } from '../game/standing'
 
 const metres = (v: number) => Math.round(v).toLocaleString('en-US')
@@ -17,12 +19,15 @@ export function Hud({
   par,
   metresFlown,
   pool,
+  onNote,
 }: {
   world: World
   par: number
   metresFlown: number
   /** Today's other flights, sorted, for the standing line. */
   pool: number[]
+  /** A word just written, so your own paper carries it without a round trip. */
+  onNote?: (name: string, text: string) => void
 }) {
   const s = useHud()
   const pct = percentileOf(s.best, pool)
@@ -127,6 +132,11 @@ export function Hud({
           <Share world={world} pct={pct} />
           <div className="again">Fly again</div>
           <Signature />
+          {/* The word left with the paper. Only here, never on the ramp: it is
+              something you write about a flight that happened, not a status you
+              set before one — and this whole block unmounts on the next launch,
+              which is what makes every flight ask from empty. */}
+          <Note day={world.day} onNote={onNote} />
         </div>
       )}
     </div>
@@ -174,6 +184,71 @@ function Signature() {
       <button onClick={() => setName(rerollCallsign())} title="roll another sign">
         ↻
       </button>
+    </div>
+  )
+}
+
+/**
+ * "A word for whoever finds it": the optional line your resting paper carries,
+ * under the call sign that signs it. Same inline pattern as the signature —
+ * never a prompt, never a modal — and it stays a single quiet link until it is
+ * clicked, so a first-time pilot can ignore it forever and most will.
+ *
+ * On the server it is one word per world, not per flight: the label pool
+ * already shows a pilot's name once however many darts they left, and a note
+ * that changed between them would be a lottery about which one you flew over.
+ * Here it is asked fresh every time. Nothing is remembered between flights —
+ * the line only reaches the world when it is confirmed, so a box pre-filled
+ * with an earlier one would be promising a delivery it was not going to make.
+ */
+function Note({ day, onNote }: { day: number; onNote?: (name: string, text: string) => void }) {
+  const [text, setText] = useState('')
+  const [editing, setEditing] = useState(false)
+
+  if (editing) {
+    const commit = (raw: string) => {
+      const clean = cleanNote(raw)
+      setText(clean)
+      setEditing(false)
+      if (clean) {
+        const sign = callsign()
+        postNote(day, sign, clean)
+        onNote?.(sign, clean)
+      }
+    }
+    return (
+      <div className="signed note" data-ui>
+        <input
+          autoFocus
+          defaultValue={text}
+          // Shorter than the invitation that opened it: the verb has done its
+          // job by now, and the field is 28ch wide.
+          placeholder="a word for whoever finds it"
+          maxLength={NOTE_MAX}
+          spellCheck={false}
+          onFocus={(e) => e.currentTarget.select()}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commit(e.currentTarget.value)
+            if (e.key === 'Escape') setEditing(false)
+          }}
+          onBlur={(e) => commit(e.currentTarget.value)}
+        />
+      </div>
+    )
+  }
+
+  return (
+    <div className="signed note" data-ui>
+      {text ? (
+        <>
+          <span className="written">“{text}”</span>
+          <button onClick={() => setEditing(true)}>change</button>
+        </>
+      ) : (
+        <button className="invite" onClick={() => setEditing(true)}>
+          leave a word for whoever finds it
+        </button>
+      )}
     </div>
   )
 }

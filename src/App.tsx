@@ -69,13 +69,29 @@ import { readGradeOverride } from './render/grade'
 /**
  * The server's view arriving after local flights have already been merged in:
  * keep whichever metre count is larger (the server may not have caught up)
- * and union the rest points, capped like the renderer is.
+ * and union the rest points, capped like the renderer is. Local notes win on
+ * collision — the edge caches `/api/world` for a minute, so the server's copy
+ * is routinely older than the word you just wrote.
  */
 function mergePresence(local: Presence, server: Presence): Presence {
   return {
     metres: Math.max(local.metres, server.metres),
     rests: [...server.rests, ...local.rests].slice(0, 500),
+    notes: { ...server.notes, ...local.notes },
   }
+}
+
+/**
+ * Notes live keyed by call sign, not by resting point, so they are joined onto
+ * the paper here — every dart a pilot left on this world carries their word,
+ * and the label pool's one-label-per-name rule shows it exactly once.
+ */
+function withNotes(p: Presence | null): RestPoint[] | null {
+  if (!p) return null
+  return p.rests.map((r) => {
+    const note = r.name ? p.notes[r.name] : undefined
+    return note ? { ...r, note } : r
+  })
 }
 import { Scene } from './render/Scene'
 import { Hud } from './ui/Hud'
@@ -131,8 +147,22 @@ export default function App() {
     setPresence((p) => ({
       metres: (p?.metres ?? 0) + distance,
       rests: [...(p?.rests ?? []), rest],
+      notes: p?.notes ?? {},
     }))
   }, [])
+
+  // A word written on the results screen lands on your own paper straight
+  // away, for the same reason the flight does: waiting on a round trip plus a
+  // minute of edge cache reads as nothing having happened.
+  const onNote = useCallback((name: string, text: string) => {
+    setPresence((p) => ({
+      metres: p?.metres ?? 0,
+      rests: p?.rests ?? [],
+      notes: { ...(p?.notes ?? {}), [name]: text },
+    }))
+  }, [])
+
+  const rests = useMemo(() => withNotes(presence), [presence])
 
   // Swapping worlds blocks the main thread for the better part of a second —
   // heightfield, vertex colours, the paper pilot's par flight. Rather than
@@ -238,13 +268,13 @@ export default function App() {
           par={par}
           shadows={shadowsOn}
           onWorldReady={onWorldReady}
-          rests={presence?.rests ?? null}
+          rests={rests}
           onFlightRested={onFlightRested}
         />
       </Canvas>
       <div className="dream" aria-hidden="true" />
       {veil && <WorldVeil phase={veil.phase} onDone={veilDone} />}
-      <Hud world={world} par={par} metresFlown={presence?.metres ?? 0} pool={pool} />
+      <Hud world={world} par={par} metresFlown={presence?.metres ?? 0} pool={pool} onNote={onNote} />
       <AudioToggle muted={music.muted} onToggle={music.toggle} />
       <TuningPanel day={day} onDay={changeDay} world={world} />
     </>

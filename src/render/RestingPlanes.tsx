@@ -21,6 +21,7 @@ import { mulberry32 } from '../sim/rng'
 import { sampleGradient, sampleHeight, surfaceHeight } from '../sim/terrain'
 import { buildDart } from './PaperPlane'
 import { patchAirFog } from './atmosphere'
+import { hudDraft } from '../state'
 
 /**
  * Where other players' flights ended, as paper on the ground.
@@ -37,11 +38,30 @@ import { patchAirFog } from './atmosphere'
  * text textures would cost real memory for words nobody is close enough to
  * read.
  *
+ * Under the name, if the pilot left one, the word they wrote when the plane
+ * came down. It is deliberately only legible from close and low: a note you
+ * have to go and find is a thing left in a field, and a note readable from
+ * cruise height would be a comment section.
+ *
  * One instanced draw call plus the label pool, capped. Planes that came to
  * rest on water are skipped — paper does not float for two weeks.
  */
 const MAX = 400
 const LABELS = 6
+
+/**
+ * Label canvas, and the metres-per-pixel that turns it into a world-space
+ * plane. The name sits on the first line and a wrapped note on the two below;
+ * the height is fixed whether or not there is a note, because a pooled label
+ * is reused for whichever dart it lands on next.
+ */
+const LABEL_W = 512
+const LABEL_H = 170
+const M_PER_PX = 4.5 / 96
+/** Text width the note wraps inside, leaving the canvas a margin either side. */
+const NOTE_W = 470
+/** Lifts the *name* to the height it has always sat at, note or no note. */
+const LABEL_LIFT = 7.1
 /**
  * Labels fade in inside this range of the camera, metres. Far enough that a
  * label is readable *ahead* of a low pass, not only directly underneath —
@@ -50,6 +70,22 @@ const LABELS = 6
  */
 const LABEL_NEAR = 300
 const LABEL_FAR = 560
+/**
+ * Labels fade back *out* inside this — but only while the HUD has a panel in
+ * the middle of the screen, which is to say never in flight. The case that
+ * forces it is your own paper: the results screen is drawn from a camera
+ * `camCrashDistance` (46 m) behind the dart that just landed, so its label —
+ * two lines tall now — is painted straight through the distance you are trying
+ * to read. Gone by 60 m clears that with room for the camera's lag and its
+ * terrain floor.
+ *
+ * Applying it while flying was a real mistake and worth naming: closing on a
+ * dart is exactly when someone is reading the note, and the text vanished at
+ * the moment it finally became legible. Nothing occludes the centre of the
+ * frame in flight, so nothing needs to move out of its way.
+ */
+const LABEL_CLOSE = 115
+const LABEL_GONE = 60
 
 interface PlacedRest {
   x: number
@@ -57,6 +93,7 @@ interface PlacedRest {
   z: number
   name: string
   metres: number
+  note: string
 }
 
 export function RestingPlanes({ world, rests }: { world: World; rests: RestPoint[] | null }) {
@@ -147,7 +184,14 @@ export function RestingPlanes({ world, rests }: { world: World; rests: RestPoint
       n++
 
       if (r.name) {
-        placed.current.push({ x: r.x, y: restY, z: r.z, name: r.name, metres: r.metres })
+        placed.current.push({
+          x: r.x,
+          y: restY,
+          z: r.z,
+          name: r.name,
+          metres: r.metres,
+          note: r.note ?? '',
+        })
       }
     }
 
@@ -168,7 +212,11 @@ export function RestingPlanes({ world, rests }: { world: World; rests: RestPoint
     for (const l of built.labels) {
       if (!l.key) continue
       const d = Math.hypot(l.sprite.position.x - camera.position.x, l.sprite.position.z - camera.position.z)
-      const t = 1 - smooth((d - LABEL_NEAR) / (LABEL_FAR - LABEL_NEAR))
+      // Read straight off the HUD draft rather than threaded through props:
+      // this is a per-frame question and the answer must not re-render a scene.
+      const panelled = hudDraft.phase !== 'flying'
+      const close = panelled ? smooth((d - LABEL_GONE) / (LABEL_CLOSE - LABEL_GONE)) : 1
+      const t = (1 - smooth((d - LABEL_NEAR) / (LABEL_FAR - LABEL_NEAR))) * close
       ;(l.sprite.material as MeshBasicMaterial).opacity = t * 0.92
       l.sprite.visible = t > 0.02
       // A billboard by hand: the label always faces the camera. Sprites do
@@ -191,8 +239,8 @@ interface Label {
 
 function makeLabel(): Label {
   const canvas = document.createElement('canvas')
-  canvas.width = 512
-  canvas.height = 96
+  canvas.width = LABEL_W
+  canvas.height = LABEL_H
   const texture = new CanvasTexture(canvas)
   const material = new MeshBasicMaterial({
     map: texture,
@@ -205,9 +253,10 @@ function makeLabel(): Label {
     depthWrite: false,
     fog: false,
   })
-  // World size: ~4.5 m of text height stays readable a few hundred metres
-  // ahead and dissolves into the fade before it could clutter.
-  const sprite = new Mesh(new PlaneGeometry((4.5 * 512) / 96, 4.5), material)
+  // World size: ~4.5 m of name height stays readable a few hundred metres
+  // ahead and dissolves into the fade before it could clutter. The canvas
+  // scale is what is fixed, so the note lines below cost height, not size.
+  const sprite = new Mesh(new PlaneGeometry(LABEL_W * M_PER_PX, LABEL_H * M_PER_PX), material)
   sprite.visible = false
   sprite.frustumCulled = false
   return { sprite, texture, canvas, key: '' }
@@ -242,29 +291,70 @@ function assignLabels(labels: Label[], placed: PlacedRest[], eye: Vector3, fwd: 
       l.sprite.visible = false
       continue
     }
-    const key = `${p.name}|${p.x}|${p.z}`
+    // The note is part of the key: one written mid-session arrives on paper
+    // already lying there, and the texture has to be redrawn when it does.
+    const key = `${p.name}|${p.x}|${p.z}|${p.note}`
     if (l.key !== key) {
       l.key = key
       drawLabel(l, p)
     }
-    l.sprite.position.set(p.x, p.y + 9, p.z)
+    l.sprite.position.set(p.x, p.y + LABEL_LIFT, p.z)
   }
 }
 
 function drawLabel(l: Label, p: PlacedRest) {
   const ctx = l.canvas.getContext('2d')
   if (!ctx) return
-  ctx.clearRect(0, 0, 512, 96)
+  ctx.clearRect(0, 0, LABEL_W, LABEL_H)
   const dist = p.metres >= 1000 ? `${(p.metres / 1000).toFixed(1)} km` : p.metres > 0 ? `${p.metres} m` : ''
   const text = dist ? `${p.name} · ${dist}` : p.name
-  ctx.font = '600 40px ui-sans-serif, system-ui, sans-serif'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
   ctx.shadowColor = 'rgba(0, 0, 0, 0.55)'
   ctx.shadowBlur = 10
+  ctx.font = '600 40px ui-sans-serif, system-ui, sans-serif'
   ctx.fillStyle = 'rgba(255, 255, 255, 0.95)'
-  ctx.fillText(text, 256, 50, 500)
+  ctx.fillText(text, LABEL_W / 2, 44, 500)
+
+  // The pilot's own words, dimmer and lighter than the sign above them —
+  // quoted and italic, because it is someone speaking rather than a readout.
+  if (p.note) {
+    const quoted = `“${p.note}”`
+    let lines: string[] = []
+    // Two passes at most. 28px is the size that reads; the step down rescues
+    // the rare line of very wide characters that two lines cannot hold, which
+    // `fillText`'s maxWidth would otherwise squash flat rather than shrink.
+    for (const size of [28, 24]) {
+      ctx.font = `italic 400 ${size}px ui-sans-serif, system-ui, sans-serif`
+      lines = wrap(ctx, quoted, NOTE_W, 2)
+      if (lines.every((l) => ctx.measureText(l).width <= NOTE_W)) break
+    }
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.8)'
+    for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], LABEL_W / 2, 104 + i * 36, NOTE_W + 10)
+  }
   l.texture.needsUpdate = true
+}
+
+/**
+ * Greedy word wrap to at most `maxLines`. Anything still too wide on the last
+ * line is left to `fillText`'s own maxWidth to squeeze — at forty-eight
+ * characters that is a rare line and a slightly narrow one beats a truncated
+ * sentence.
+ */
+function wrap(ctx: CanvasRenderingContext2D, text: string, max: number, maxLines: number): string[] {
+  const lines: string[] = []
+  let line = ''
+  for (const word of text.split(' ')) {
+    const next = line ? `${line} ${word}` : word
+    if (!line || ctx.measureText(next).width <= max || lines.length >= maxLines - 1) {
+      line = next
+    } else {
+      lines.push(line)
+      line = word
+    }
+  }
+  if (line) lines.push(line)
+  return lines
 }
 
 const smooth = (t: number) => {

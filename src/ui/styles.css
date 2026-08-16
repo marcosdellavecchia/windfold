@@ -247,6 +247,35 @@ canvas {
   color: #fff;
 }
 
+/* The note sits directly under the signature and reads as its second line, so
+   it is tighter to it than the signature is to the block above. */
+.signed.note {
+  margin-top: 6px;
+}
+
+.signed.note input {
+  width: 28ch;
+}
+
+.signed.note input::placeholder {
+  color: rgba(255, 255, 255, 0.35);
+}
+
+/* Written, it is the pilot's own words rather than chrome — a shade brighter
+   than the label around it, and italic, the way a hand-written line reads. */
+.signed .written {
+  color: rgba(255, 255, 255, 0.72);
+  font-style: italic;
+}
+
+/* Unwritten, the invitation is quieter than everything else on the screen: it
+   must be findable, and it must never compete with "Fly again". */
+.signed .invite {
+  margin-left: 0;
+  color: rgba(255, 255, 255, 0.38);
+  font-style: italic;
+}
+
 .signed input {
   width: 13ch;
   background: transparent;
