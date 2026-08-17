@@ -1,6 +1,14 @@
 import { AdditiveBlending, BufferAttribute, BufferGeometry, Line, LineBasicMaterial } from 'three'
 import type { Rgb } from '../sim/palette'
 
+/**
+ * Where the wake sits in the transparent queue: after the water (1), the clouds
+ * (2) and the motes (3), and well below the lens flare. The flight's own line
+ * through the air is the one thing on screen that should never be hidden by
+ * weather.
+ */
+export const TRAIL_ORDER = 4
+
 const MAX_POINTS = 2200
 const DROP = 300
 const SAMPLE_HZ = 20
@@ -40,6 +48,20 @@ export class Trail {
     })
     this.object = new Line(this.geometry, material)
     this.object.frustumCulled = false
+    // Drawn after the water, and after every other transparent surface.
+    //
+    // The line writes no depth — it must not punch holes in itself where it
+    // crosses — so nothing stops a transparent surface drawn later from
+    // painting straight over it. The water plane is exactly that surface, and
+    // it carries renderOrder 1 against this line's default 0, so a wake over the
+    // sea was not dimmed by the water, it was *erased* by it: on an archipelago
+    // day the entire trail could be missing. The river ribbons share the water's
+    // order and did the same thing on a smaller scale.
+    //
+    // Depth testing still does the honest occlusion — the terrain is opaque and
+    // writes depth, so a line behind a hill is still behind the hill, which is
+    // the part that has to keep working.
+    this.object.renderOrder = TRAIL_ORDER
   }
 
   clear() {

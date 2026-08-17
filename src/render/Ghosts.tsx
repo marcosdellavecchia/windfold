@@ -1,5 +1,6 @@
 import { useEffect, useMemo } from 'react'
 import { AdditiveBlending, BufferAttribute, BufferGeometry, Color, Group, Line, LineBasicMaterial } from 'three'
+import { TRAIL_ORDER } from './Trail'
 import type { FlightSample } from '../sim/flight'
 
 /**
@@ -73,5 +74,9 @@ function ghostLine(path: FlightSample[], brightness: number): Line {
   })
   const line = new Line(geometry, material)
   line.frustumCulled = false
+  // Same queue position as the live wake, for the same reason: these write no
+  // depth, so the water plane would otherwise paint over every route that
+  // crosses it. See Trail.ts.
+  line.renderOrder = TRAIL_ORDER
   return line
 }
