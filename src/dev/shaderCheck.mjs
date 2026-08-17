@@ -29,6 +29,7 @@
  */
 import { readFileSync, readdirSync } from 'node:fs'
 import { AIR_FOG_GLSL, AIR_FOG_UNIFORMS, CLOUD_SHADOW_GLSL } from '../render/atmosphere'
+import { WATER_OPTICS_GLSL } from '../render/waterOptics'
 
 const DIR = 'src/render'
 
@@ -77,6 +78,7 @@ for (const file of files) {
   const glsl = templateLiterals(src)
     .replace(/\bCLOUD_SHADOW_GLSL\b/g, CLOUD_SHADOW_GLSL)
     .replace(/\bAIR_FOG_GLSL\b/g, AIR_FOG_GLSL)
+    .replace(/\bWATER_OPTICS_GLSL\b/g, WATER_OPTICS_GLSL)
   if (!/\b(gl_FragColor|gl_Position|void main)\b/.test(glsl)) continue
   checked++
 

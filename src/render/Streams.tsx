@@ -10,11 +10,12 @@ import {
   Vector2,
 } from 'three'
 import type { World } from '../sim/world'
-import { rgbToHex, type Rgb } from '../sim/palette'
+import { rgbToHex } from '../sim/palette'
 import { meshHeight, type Heightfield } from '../sim/terrain'
 import { Noise2D } from '../sim/noise'
 import { mulberry32 } from '../sim/rng'
 import { AIR_FOG_GLSL, AIR_FOG_UNIFORMS, CLOUD_SHADOW_GLSL, cloudShadowSeed } from './atmosphere'
+import { WATER_OPTICS_GLSL } from './waterOptics'
 import { TONEMAP_GLSL } from './grade'
 
 /**
@@ -257,12 +258,21 @@ export function Streams({ world }: { world: World }) {
     // bright pad at the foot of every waterfall, which is how the eye finds
     // the waterfall in the first place. Computed before the emit loop,
     // because a stretch's pool comes from the stretches *above* it.
+    //
+    // Measured on the surface the ribbon is actually drawn on, not on the ground
+    // underneath it. Those are the same thing everywhere except the last stretch
+    // of every river, where the cell downstream is lake bed twenty metres under
+    // the waterline: taken from `data` that reads as a twenty-metre drop, so
+    // every mouth on every map fired a full cascade and the river arrived at the
+    // lake as a mass of white streaks. `surfaceY` already clamps to the water
+    // plane, which is where the water is — a river meets a lake flush.
     const fallOf = new Map<number, number>()
     const poolAt = new Map<number, number>()
     for (const i of touched) {
       const j = hf.flowTo[i]
       const straight = Math.hypot(px[j] - px[i], pz[j] - pz[i]) || 1
-      const fall = Math.min(1, Math.max(0, (hf.data[i] - hf.data[j]) / straight / 0.22))
+      const drop = surfaceY(hf, px[i], pz[i]) - surfaceY(hf, px[j], pz[j])
+      const fall = Math.min(1, Math.max(0, drop / straight / 0.22))
       fallOf.set(i, fall)
       if (fall > 0.55) poolAt.set(j, Math.max(poolAt.get(j) ?? 0, fall))
     }
@@ -434,18 +444,11 @@ export function Streams({ world }: { world: World }) {
         // waterline, so a river running over it agrees with the beaches on the
         // same map by construction rather than by a second guess at the palette.
         uBed: { value: new Color(rgbToHex(pal.sand)) },
-        // The day's light, as a tint that carries hue without carrying
-        // brightness — the same trick the terrain uses on its slopes. Sun only:
-        // blending ambient in made it measurably worse, because ambient is the
-        // sky's own cool colour and it cancelled the warmth this exists to add.
-        //
-        // Everything else in the scene is lit: the terrain is multiplied by sun
-        // and ambient, and the lake borrows warmth from the sky it reflects. A
-        // ShaderMaterial with no lights in it shows raw palette colour, so the
-        // river was the one surface on the map wearing none of the day's
-        // weather, which is why it stayed cold blue under an orange sunset.
-        uLight: { value: new Color(...chromaOf(pal.sunLight)) },
         uSun: { value: new Color(rgbToHex(pal.sun)) },
+        // How much mirror the day earns, by the lake's own formula and from the
+        // same wind — so the two surfaces cap their reflection at one value
+        // rather than at two that happen to be close.
+        uWindAmt: { value: Math.min(world.air.windSpeed / 5.5, 1) },
         uSunDir: { value: world.sunDir.clone() },
         uTime: { value: 0 },
         uCloudWind: { value: new Vector2(world.air.windX, world.air.windZ) },
@@ -485,7 +488,7 @@ export function Streams({ world }: { world: World }) {
         uniform vec2 uCloudWind;
         uniform float uCloudSeed;
         uniform vec3 uBed;
-        uniform vec3 uLight;
+        uniform float uWindAmt;
         uniform vec3 uSun;
         uniform vec3 uSunDir;
         varying float vSide;
@@ -497,17 +500,7 @@ export function Streams({ world }: { world: World }) {
 
         ${CLOUD_SHADOW_GLSL}
         ${AIR_FOG_GLSL}
-
-        /**
-         * The sky's own gradient — the same two steps Sky.tsx and the lake
-         * use, with the lake's directional horizon: a river reflecting a warm
-         * sky glows on the sunward reach, exactly as the lake it feeds does.
-         */
-        vec3 skyTone(float up, vec2 az) {
-          vec3 h = mix(uSkyHorizon, airFogColor(normalize(vec3(az.x, 0.12, az.y))), 0.55);
-          vec3 s = mix(h, uSkyTop, smoothstep(0.0, 0.55, up));
-          return mix(uFog, s, smoothstep(-0.03, 0.28, up));
-        }
+        ${WATER_OPTICS_GLSL}
 
         /**
          * The moving surface. Wavelengths of roughly eleven and four metres,
@@ -571,31 +564,27 @@ export function Streams({ world }: { world: World }) {
           // cold object on a warm map.
           // Depth across the channel: nothing at the banks, most in the middle.
           float depth = smoothstep(0.2, 0.95, mid);
-          // The water column on its own, darker where there is more of it...
-          vec3 water = mix(uShallow, uDeep, depth * 0.45);
-          // ...and the bed underneath, showing through more at the edges than in
-          // the middle but never absent. Blending the bed only at the banks was
-          // the first attempt and it changed nothing worth seeing, because the
-          // middle of the channel is the part anyone actually looks at.
-          vec3 body = mix(uBed, water, 0.6 + depth * 0.12) * uLight;
+          // The water column on its own, darker where there is more of it —
+          // the same two tones the lake is built from, so a river arriving at
+          // one is already the right colour before anything is added to it.
+          vec3 water = mix(uShallow, uDeep, depth * 0.18);
+          // ...and the bed under it. The one thing a river legitimately has that
+          // a lake does not: a hand's depth of water over sand is mostly the
+          // colour of the sand, which is why a desert river is ochre. Keyed to
+          // the depth across the channel, so it tints the margins and fades out
+          // toward the middle — and it is gone by the mouth, where the ribbon
+          // meets the lake and the two have to agree.
+          vec3 body = mix(water, uBed, (1.0 - depth) * 0.4);
 
-          // The same reflection the lake has, for the same reason: a surface that
-          // returns one fixed colour is not read as a surface. Chop only — the
-          // ribbon is level across its width, so the sheet is flat and the waves
-          // are all there is to tilt it.
+          // From here the river is shaded exactly as the lake is: same Fresnel
+          // curve, same reflection, same cap, same glitter — see waterOptics.
+          // A ribbon with its own optics read as polished metal next to the
+          // water it was running into.
           vec3 nrm = normalize(vec3(-rx * 0.7, 1.0, -rz * 0.7));
           vec3 viewDir = normalize(cameraPosition - vWorld);
-          vec3 refl = reflect(-viewDir, nrm);
-          vec3 skyCol = skyTone(mix(max(refl.y, 0.0), 0.8, 0.45), refl.xz);
-          float fres = pow(1.0 - clamp(dot(nrm, viewDir), 0.0, 1.0), 4.0);
-          // And a floor under the reflection. Fresnel is right for a lake seen
-          // across its length — a grazing view is nearly all sky, which is
-          // exactly why the lake in the distance is the colour of the sunset. A
-          // river is only ever seen from more or less above, so it never earns
-          // any of that and stayed the one surface on the map wearing none of
-          // the day's light. The floor is what puts it back in the same weather
-          // as everything around it.
-          vec3 col = mix(body, skyCol, clamp(fres, 0.38, 0.55));
+          vec3 skyCol = waterReflection(nrm, viewDir);
+          float fres = waterFresnel(nrm, viewDir);
+          vec3 col = mix(body, skyCol, clamp(fres, 0.0, waterMirror(uWindAmt)));
           col *= 0.96 + r0 * 0.08;
 
           // Riffle and pool: a river alternates fast shallow water and slow
@@ -640,14 +629,12 @@ export function Streams({ world }: { world: World }) {
           // fourteen-metre river was more shadow than water.
           col *= 1.0 - (1.0 - smoothstep(0.0, 0.2, mid)) * 0.2;
 
-          // The same glitter the lake carries. Two surfaces of the same water on
-          // the same map should catch the sun the same way, and without it a
-          // river stayed matte while the lake beside it sparkled. The road —
-          // the broad soft lobe the sparkle sits in — is what lets a whole
-          // reach light up when it happens to run toward the sun.
-          vec3 hv = normalize(normalize(uSunDir) + viewDir);
-          col += uSun * pow(max(dot(nrm, hv), 0.0), 180.0) * 0.7;
-          col += uSun * pow(max(dot(nrm, hv), 0.0), 18.0) * 0.15;
+          // The lake's own glitter, from the lake's own code. Two surfaces of
+          // the same water on the same map catch the sun the same way — and the
+          // facet term is what carries the day's light onto a river seen from
+          // straight above, which is the job the Fresnel floor used to be doing
+          // badly.
+          col += waterGlitter(nrm, viewDir, uSunDir, skyCol, 1.0 - smoothstep(500.0, 2600.0, vFogDist));
 
           col *= cloudShadow(vWorld.xz, uCloudWind, uTime, uCloudSeed);
           // The shared directional haze, so a distant river hazes to the same
@@ -717,12 +704,6 @@ function surfaceY(hf: Heightfield, x: number, z: number): number {
  */
 function edgeY(hf: Heightfield, centreY: number, x: number, z: number): number {
   return Math.min(centreY, surfaceY(hf, x, z))
-}
-
-/** A colour's hue and saturation with its brightness divided out. */
-function chromaOf(c: Rgb): Rgb {
-  const mean = (c[0] + c[1] + c[2]) / 3
-  return mean < 1e-4 ? [1, 1, 1] : [c[0] / mean, c[1] / mean, c[2] / mean]
 }
 
 /** CHANNEL..1 remapped to 0..1, so width tracks flow across the visible range. */

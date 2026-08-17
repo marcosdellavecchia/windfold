@@ -17,6 +17,7 @@ import type { World } from '../sim/world'
 import { rgbToHex } from '../sim/palette'
 import { HALF_WORLD } from '../sim/terrain'
 import { AIR_FOG_GLSL, AIR_FOG_UNIFORMS, CLOUD_SHADOW_GLSL, cloudShadowSeed } from './atmosphere'
+import { WATER_OPTICS_GLSL } from './waterOptics'
 import { TONEMAP_GLSL } from './grade'
 
 /**
@@ -152,6 +153,7 @@ export function Water({ world }: { world: World }) {
 
         ${CLOUD_SHADOW_GLSL}
         ${AIR_FOG_GLSL}
+        ${WATER_OPTICS_GLSL}
 
         /** One texel, decoded. The 16 bits arrive split across two bytes. */
         float texelH(vec2 texel) {
@@ -204,20 +206,6 @@ export function Water({ world }: { world: World }) {
           return t.x + t.y < 1.0
             ? h00 + (h10 - h00) * t.x + (h01 - h00) * t.y
             : h11 + (h10 - h11) * (1.0 - t.y) + (h01 - h11) * (1.0 - t.x);
-        }
-
-        /**
-         * The sky's colour in a reflected direction — the same two steps
-         * Sky.tsx paints with, so the reflection and the thing being reflected
-         * cannot drift apart. The horizon half of the gradient takes the
-         * directional haze: the sky is warm around the sun's azimuth now, so
-         * the water reflecting it glows on the same side — which is most of
-         * what a lake at golden hour actually does.
-         */
-        vec3 skyTone(float up, vec2 az) {
-          vec3 h = mix(uSkyHorizon, airFogColor(normalize(vec3(az.x, 0.12, az.y))), 0.55);
-          vec3 s = mix(h, uSkyTop, smoothstep(0.0, 0.55, up));
-          return mix(uFog, s, smoothstep(-0.03, 0.28, up));
         }
 
         // The sea's long waves: one swell train along the wind plus a weaker
@@ -298,10 +286,7 @@ export function Water({ world }: { world: World }) {
           float swellAmp = 3.6 * (1.0 - smoothstep(500.0, 3000.0, vDist)) * (0.3 + 0.7 * uFoam);
           vec3 n = normalize(vec3(-wx * ripple - sx * swellAmp, 1.0, -wz * ripple - sz * swellAmp));
 
-          // Looking straight down you see into the water; at a grazing angle the
-          // surface turns into a mirror of the sky. That flip is most of what sells
-          // water seen from an aircraft.
-          float fres = pow(1.0 - clamp(dot(n, viewDir), 0.0, 1.0), 4.0);
+          float fres = waterFresnel(n, viewDir);
 
           // Body colour varies with *position only*, never with the wave phase.
           // Modulating it by w0 put a 300 m brightness field on the surface that
@@ -340,18 +325,9 @@ export function Water({ world }: { world: World }) {
           vec3 shelf = mix(uShallow, uDeep, 0.4);
           body = mix(shelf, body, smoothstep(7.0, 22.0, depth));
           body = mix(uShallow, body, smoothstep(0.5, 7.0, depth));
-          // What the surface actually reflects, per pixel: the sky in the
-          // direction the wave sends the eye. Every crest and trough now returns
-          // a different part of the dome, which is the whole reason a real water
-          // surface reads as reflective — the image moves when the surface does.
-          //
-          // Biased upward rather than taken straight. A true grazing reflection
-          // returns the horizon, and near a low sun the horizon is cream, which
-          // turned the sea into a desert — the reason this used to be one flat
-          // zenith-weighted colour. Keeping some of the zenith in the sample
-          // preserves the variation without bringing the desert back.
+          // What the surface actually reflects, per pixel.
           vec3 refl = reflect(-viewDir, n);
-          vec3 skyCol = skyTone(mix(max(refl.y, 0.0), 0.8, 0.45), refl.xz);
+          vec3 skyCol = waterReflection(n, viewDir);
 
           // What the mirror shows when it is not showing sky: the bank. The
           // heightfield already lives in this shader as a texture, so the
@@ -371,11 +347,7 @@ export function Water({ world }: { world: World }) {
           }
           skyCol = mix(skyCol, uBank, bankHit * mix(0.7, 0.3, uWindAmt) * (1.0 - smoothstep(900.0, 2200.0, vDist)));
 
-          // Capped well below 1: a physically full mirror at grazing angles turns every
-          // lake and sea into the same colour as the sky, and the landscape goes
-          // monochrome. Water keeps some of its own body colour at every angle —
-          // though a calm day earns more mirror than a windy one.
-          vec3 col = mix(body, skyCol, clamp(fres, 0.0, mix(0.55, 0.42, uWindAmt)));
+          vec3 col = mix(body, skyCol, clamp(fres, 0.0, waterMirror(uWindAmt)));
 
           // The far texture: ~900 m weather bands, wobbled off straight, in
           // brightness only — brightness survives at ranges where normal
@@ -394,26 +366,9 @@ export function Water({ world }: { world: World }) {
           float fleck = smoothstep(0.86, 0.97, csNoise(vec2(fq.x * 0.02 - uTime * 0.5, fq.y * 0.12)));
           col = mix(col, vec3(1.0), fleck * uWindAmt * 0.35 * (1.0 - smoothstep(600.0, 2400.0, vDist)));
 
-          // Facet shimmer against the bright sky, not just the sun: real
-          // water glitters in every direction, because every facet mirrors
-          // *somewhere* bright. This is what keeps a calm dusk sea alive when
-          // the sun is behind the camera and the glitter below has nothing to
-          // catch — the one case where the whole surface used to go dead.
-          vec3 h2 = normalize(vec3(0.0, 1.0, 0.0) + viewDir);
-          float skyFacet = pow(max(dot(n, h2), 0.0), 60.0);
-          col += skyCol * skyFacet * 0.22 * (1.0 - smoothstep(500.0, 2600.0, vDist));
-
-          // Sun glitter: a tight specular on the wave slopes.
-          vec3 h = normalize(normalize(uSunDir) + viewDir);
-          float spec = pow(max(dot(n, h), 0.0), 220.0);
-          col += uSun * spec * 1.6;
-          // And the road it lies on. The tight lobe above is one sparkle; this is
-          // the broad ragged path from the sun to the eye that all the sparkles
-          // sit in, and it is probably the single most recognisable thing about a
-          // sunlit stretch of water. It needs no extra waves — the same normal,
-          // read with a much softer exponent, is what spreads it out.
-          float road = pow(max(dot(n, h), 0.0), 16.0);
-          col += uSun * road * 0.26;
+          // Facet shimmer, sun glitter and the road it lies on — the river
+          // ribbons get the identical three from the same chunk.
+          col += waterGlitter(n, viewDir, uSunDir, skyCol, 1.0 - smoothstep(500.0, 2600.0, vDist));
 
           // Whitecaps where chop and swell crest together — kept close, where
           // individual caps are readable, and only as much wind as the day has.
