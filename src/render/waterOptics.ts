@@ -94,6 +94,6 @@ export const WATER_OPTICS_GLSL = /* glsl */ `
     vec3 h = normalize(normalize(sunDir) + viewDir);
     float d = max(dot(nrm, h), 0.0);
     return skyCol * pow(max(dot(nrm, up), 0.0), 60.0) * 0.22 * near
-         + uSun * (pow(d, 220.0) * 1.6 + pow(d, 16.0) * 0.26);
+         + uSun * (pow(d, 220.0) * 0.8 + pow(d, 16.0) * 0.30);
   }
 `

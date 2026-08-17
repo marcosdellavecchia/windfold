@@ -117,15 +117,15 @@ export function Water({ world }: { world: World }) {
         },
         ...AIR_FOG_UNIFORMS,
       },
+      // Only the world position travels from the vertex shader. The distance to
+      // the camera is a fragment-shader job here, and getting that wrong was the
+      // longest-standing bug in this file — see `vDist` in main().
       vertexShader: /* glsl */ `
         varying vec3 vWorld;
-        varying float vDist;
         void main() {
           vec4 world4 = modelMatrix * vec4(position, 1.0);
           vWorld = world4.xyz;
-          vec4 mv = viewMatrix * world4;
-          vDist = length(mv.xyz);
-          gl_Position = projectionMatrix * mv;
+          gl_Position = projectionMatrix * viewMatrix * world4;
         }
       `,
       fragmentShader: /* glsl */ `
@@ -149,7 +149,6 @@ export function Water({ world }: { world: World }) {
         uniform float uFoam;
         uniform vec3 uBank;
         varying vec3 vWorld;
-        varying float vDist;
 
         ${CLOUD_SHADOW_GLSL}
         ${AIR_FOG_GLSL}
@@ -247,7 +246,25 @@ export function Water({ world }: { world: World }) {
         }
 
         void main() {
-          vec3 viewDir = normalize(cameraPosition - vWorld);
+          // Per fragment, and it has to be.
+          //
+          // This was a varying, interpolated across a plane with four vertices
+          // 73 km apart, so every pixel of water reported a distance of
+          // kilometres — a lake two hundred metres away measured at six. It had
+          // been that way since the first commit, and it quietly switched off
+          // every distance-faded term below: the wave normals (260-1600 m), the
+          // caustics (under 900 m), the surf animation (350-1100 m) and the
+          // whitecaps had never once been drawn. What was left was body colour
+          // under a fixed sheet of haze, which is why the sea used to read as
+          // pale cardboard at every range, and why a river ribbon — which gets
+          // its distance right, over a mesh with vertices every eleven metres —
+          // could never be made to match the lake it ran into.
+          //
+          // Exact, not merely better: vWorld interpolates perspective-
+          // correctly, so this is the true distance to the fragment.
+          vec3 toEye = cameraPosition - vWorld;
+          float vDist = length(toEye);
+          vec3 viewDir = toEye / max(vDist, 1e-4);
 
           // How much water is under this pixel. Beyond the map the texture
           // clamps to the border heights, which the border mask keeps low, so
@@ -274,7 +291,7 @@ export function Water({ world }: { world: World }) {
           // alias sooner, so this fades sooner than it used to. And a windless
           // day flattens it too — a calm lake is closer to a mirror than to a
           // texture, and the mirror is the better look.
-          float ripple = 4.0 * mix(0.65, 1.0, uWindAmt) * (1.0 - smoothstep(260.0, 1600.0, vDist));
+          float ripple = 0.5 * mix(0.65, 1.0, uWindAmt) * (1.0 - smoothstep(260.0, 1600.0, vDist));
 
           // The swell tilts the same normal the chop perturbs, but being ~15x
           // longer it stays legible far past where the chop must fade — long
@@ -283,7 +300,7 @@ export function Water({ world }: { world: World }) {
           float s0 = swellAt(vWorld.xz, uTime);
           float sx = swellAt(vWorld.xz + vec2(e, 0.0), uTime) - s0;
           float sz = swellAt(vWorld.xz + vec2(0.0, e), uTime) - s0;
-          float swellAmp = 3.6 * (1.0 - smoothstep(500.0, 3000.0, vDist)) * (0.3 + 0.7 * uFoam);
+          float swellAmp = 0.6 * (1.0 - smoothstep(500.0, 3000.0, vDist)) * (0.3 + 0.7 * uFoam);
           vec3 n = normalize(vec3(-wx * ripple - sx * swellAmp, 1.0, -wz * ripple - sz * swellAmp));
 
           float fres = waterFresnel(n, viewDir);
@@ -363,8 +380,17 @@ export function Water({ world }: { world: World }) {
           // and from a few hundred metres up the clearest sign the sea is a
           // surface with weather on it rather than a material.
           vec2 fq = vec2(dot(vWorld.xz, uSwell), dot(vWorld.xz, vec2(-uSwell.y, uSwell.x)));
-          float fleck = smoothstep(0.86, 0.97, csNoise(vec2(fq.x * 0.02 - uTime * 0.5, fq.y * 0.12)));
-          col = mix(col, vec3(1.0), fleck * uWindAmt * 0.35 * (1.0 - smoothstep(600.0, 2400.0, vDist)));
+          // Twenty metres long rather than fifty. Stretched 6:1 and held close,
+          // these stopped being blown foam and became scratches drawn across the
+          // water directly below the aircraft — the one place the eye can see
+          // that a streak has hard ends.
+          float fleck = smoothstep(0.80, 0.99, csNoise(vec2(fq.x * 0.05 - uTime * 0.5, fq.y * 0.12)));
+          // Half what it was, and it fades in rather than starting at full
+          // strength under the aircraft. The lattice is stretched fifty metres
+          // downwind against four across, which at close range stopped being
+          // blown foam and became scratches on the surface.
+          col = mix(col, vec3(1.0), fleck * uWindAmt * 0.09
+            * smoothstep(400.0, 1000.0, vDist) * (1.0 - smoothstep(1800.0, 3200.0, vDist)));
 
           // Facet shimmer, sun glitter and the road it lies on — the river
           // ribbons get the identical three from the same chunk.
@@ -378,10 +404,16 @@ export function Water({ world }: { world: World }) {
           // wind, in brightness only, out to where the fog takes over. The sea
           // between 800 m and 3 km used to have literally nothing happening on
           // it — this is the something.
+          //
+          // The patches are 77 m across, so they belong to the middle distance
+          // and nowhere nearer: held in at 150 m they came out as a field of
+          // pale lozenges lying on the water directly under the aircraft, each
+          // one bigger than the wing. They start where a 77 m patch is a
+          // brushstroke rather than a shape.
           float capN = csNoise(vWorld.xz * 0.013 - uSwell * (uTime * 1.4) + 5.0);
           float caps = smoothstep(0.72, 0.92, capN + s0 * 0.12) * uWindAmt
-                     * smoothstep(150.0, 450.0, vDist) * (1.0 - smoothstep(2400.0, 4200.0, vDist));
-          col = mix(col, vec3(1.0), caps * 0.18);
+                     * smoothstep(700.0, 1500.0, vDist) * (1.0 - smoothstep(2400.0, 4200.0, vDist));
+          col = mix(col, vec3(1.0), caps * 0.14);
 
           // --- surf ----------------------------------------------------------
           // How far out the animation is allowed to run. Distant animated
@@ -391,7 +423,16 @@ export function Water({ world }: { world: World }) {
           // Foam is bubbles, not paint: a fast dapple that eats holes in
           // every band below, which is most of what separates surf from a
           // white contour line.
-          float bubbles = 0.55 + 0.45 * csNoise(vWorld.xz * 0.3 + uSwell * (uTime * mix(1.2, 0.0, farAnim)));
+          //
+          // A 3 m lattice, so it has to fade to flat before it goes sub-pixel:
+          // with the distance finally correct this term is legible for the first
+          // time, and past a few hundred metres it was arriving as shimmer on
+          // every foam line at once.
+          float bubbles = mix(
+            0.55 + 0.45 * csNoise(vWorld.xz * 0.3 + uSwell * (uTime * mix(1.2, 0.0, farAnim))),
+            1.0,
+            smoothstep(250.0, 800.0, vDist)
+          );
 
           // The lip: a thin bright line hard against the waterline. Its
           // narrowness is the point — this is what makes the coast read as a
@@ -404,9 +445,17 @@ export function Water({ world }: { world: World }) {
           // free. The phase marches shoreward; the swell pulses it; a slow
           // along-shore noise breaks the lines so they arrive as surf rather
           // than as bathymetry.
-          float bph = depth * 1.5 - uTime * mix(0.8, 0.0, farAnim) + s0 * 0.6;
-          float bline = smoothstep(0.72, 0.95, sin(bph) * 0.5 + 0.5);
-          float bmask = (1.0 - smoothstep(4.0, 24.0, depth)) * smoothstep(0.5, 1.6, depth);
+          //
+          // One cycle per eleven metres of depth, not per four. Keying the phase
+          // to depth means the *shelf* sets how many lines there are, and on a
+          // gently shelving coast the old rate drew five and six of them at once
+          // — concentric rings following the bathymetry, which read as a contour
+          // map rather than as surf. Two lines is what a beach has. The band is
+          // shallower for the same reason: breakers happen where the bottom is
+          // close, and 24 m is not close.
+          float bph = depth * 0.55 - uTime * mix(0.8, 0.0, farAnim) + s0 * 0.6;
+          float bline = smoothstep(0.55, 0.95, sin(bph) * 0.5 + 0.5);
+          float bmask = (1.0 - smoothstep(3.0, 13.0, depth)) * smoothstep(0.5, 1.6, depth);
           float alongShore = 0.55 + 0.45 * csNoise(vWorld.xz * 0.016 + 11.0);
           float breakers = bline * bmask * alongShore;
 
@@ -427,8 +476,15 @@ export function Water({ world }: { world: World }) {
           float cr2 = 1.0 - abs(2.0 * csNoise(vWorld.xz * 0.13 + vec2(4.7, -uTime * 0.05)) - 1.0);
           float caust = pow(min(cr1, cr2), 3.0);
           float cmask = smoothstep(0.4, 1.8, depth) * (1.0 - smoothstep(3.5, 9.0, depth))
-                      * (1.0 - smoothstep(300.0, 900.0, vDist));
-          col += mix(vec3(1.0), uSun, 0.4) * caust * cmask * 0.3;
+                      * (1.0 - smoothstep(200.0, 650.0, vDist));
+          // A third of the strength it was written at, and much less of the
+          // sun's own colour in it. Both for the same reason: this is the first
+          // build in which caustics have ever been drawn, and at full weight a
+          // shallow shelf came out as a swimming pool — on a red evening, as a
+          // field of orange sparks. What a caustic web should be from a glider
+          // is a suggestion of texture on a sandbar, not the brightest thing in
+          // the frame.
+          col += mix(vec3(1.0), uSun, 0.22) * caust * cmask * 0.11;
 
           col *= cloudShadow(vWorld.xz, uCloudWind, uTime, uCloudSeed);
 
