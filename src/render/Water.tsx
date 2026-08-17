@@ -271,13 +271,31 @@ export function Water({ world }: { world: World }) {
           // the open sea stays deep all the way to the fog.
           float depth = uWaterLevel - terrainAt(vWorld.xz);
 
-          // Beyond the map the height texture clamps to its border row, which
-          // extrudes the last coastline outward as streaks of phantom shallows
-          // and shore fade running to the horizon. Past the border is open
-          // ocean; call it deep and be done.
-          float inMap = (1.0 - smoothstep(${(HALF_WORLD * 0.93).toFixed(1)}, ${(HALF_WORLD * 0.985).toFixed(1)}, abs(vWorld.x)))
-                      * (1.0 - smoothstep(${(HALF_WORLD * 0.93).toFixed(1)}, ${(HALF_WORLD * 0.985).toFixed(1)}, abs(vWorld.z)));
-          depth = mix(1000.0, depth, inMap);
+          // The sea floor falls away past the edge of the map.
+          //
+          // Something has to happen out there: the height texture clamps to its
+          // border row, so whatever the last row holds is extruded outward
+          // forever — a coastline that reaches the border becomes a phantom
+          // peninsula running to the horizon, wearing phantom shallows and a
+          // phantom surf line.
+          //
+          // This used to be handled by blending the depth to a flat 1000 m
+          // across a band *inside* the map. That band is 338 m wide, which is
+          // nothing at all when the water is seen at a grazing angle — the whole
+          // ramp lands inside five pixels — and it moved the depth by a factor
+          // of twenty, so it drew a hard straight line across the sea with
+          // darker water beyond it. On three sides of every coastal map. It read
+          // exactly as what it was: the boundary of the world.
+          //
+          // So: no boundary. Depth is the terrain's depth everywhere, and past
+          // the last row the floor simply drops away — the same thing a real
+          // continental shelf does at its edge. The ramp starts *at* the map
+          // edge, where it is continuous with the ground inside by construction,
+          // and 900 m is enough to drown any phantom land the clamp extrudes,
+          // since the border mask holds the outer rows to a twelfth of the
+          // day's relief.
+          float beyond = max(abs(vWorld.x), abs(vWorld.z)) - ${HALF_WORLD.toFixed(1)};
+          depth += smoothstep(0.0, 1400.0, beyond) * 900.0;
 
           // Perturb the surface normal by the wave slope.
           float e = 6.0;
@@ -411,7 +429,7 @@ export function Water({ world }: { world: World }) {
           // one bigger than the wing. They start where a 77 m patch is a
           // brushstroke rather than a shape.
           float capN = csNoise(vWorld.xz * 0.013 - uSwell * (uTime * 1.4) + 5.0);
-          float caps = smoothstep(0.72, 0.92, capN + s0 * 0.12) * uWindAmt
+          float caps = smoothstep(0.62, 0.96, capN + s0 * 0.12) * uWindAmt
                      * smoothstep(700.0, 1500.0, vDist) * (1.0 - smoothstep(2400.0, 4200.0, vDist));
           col = mix(col, vec3(1.0), caps * 0.14);
 
@@ -520,8 +538,37 @@ export function Water({ world }: { world: World }) {
           // The soft shore itself: water thins to nothing over its last two
           // metres of depth, so the waterline is a gradient the width of a
           // beach's wet edge rather than an aliased intersection line.
-          float shore = smoothstep(0.0, 2.2, depth);
-          gl_FragColor = vec4(col, mix(0.86, 0.97, fres) * shore);
+          // The soft shore itself: water thins to nothing over its last couple
+          // of metres of depth, so the waterline is a gradient the width of a
+          // beach's wet edge rather than an aliased intersection line.
+          //
+          // Two metres of depth is a wide, soft band on a shelving beach and
+          // almost nothing on a steep one, where it collapsed to a hard edge a
+          // pixel or two across — and a hard edge on a surface this close to the
+          // ground crawls and stutters as the camera moves, which is what the
+          // whole shaking-coast fight has always been about. So the fade is
+          // never allowed to be narrower than the pixel it is drawn in:
+          // fwidth is how fast depth changes across one pixel, and asking for
+          // two of them buys a gradient wide enough to antialias itself at any
+          // distance, on any gradient of beach. Capped, because a cliff plunging
+          // straight into the sea can put a hundred metres of depth under one
+          // pixel and that would fade half the bay.
+          float shore = smoothstep(0.0, clamp(fwidth(depth) * 2.0, 2.2, 30.0), depth);
+          // Opacity by depth, which is the honest version of what this always
+          // wanted to be. A hand's depth of water over sand is a wet sheen and
+          // you see the sand; ten metres of it you do not see through at all.
+          //
+          // It was a flat 0.86 before, at every depth, and that had two costs.
+          // The seabed's own surface texture showed through the open sea as a
+          // faint stipple, which is the one thing that stops water reading as
+          // water. And out past the last row of the terrain mesh there is no
+          // seabed to show through — there is sky — so the mesh's own straight
+          // edge appeared *through* the sea as a hard diagonal line with lighter
+          // water beyond it, on every coastal map, from anywhere near the
+          // border. That line is the boundary of the world, and this is what was
+          // drawing it.
+          float alpha = mix(mix(0.75, 1.0, smoothstep(0.4, 8.0, depth)), 1.0, fres);
+          gl_FragColor = vec4(col, alpha * shore);
           ${TONEMAP_GLSL}
         }
       `,
