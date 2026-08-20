@@ -1,0 +1,6 @@
+{
+  "rewrites": [
+    { "source": "/windfold", "destination": "/" },
+    { "source": "/windfold/:path*", "destination": "/:path*" }
+  ]
+}
