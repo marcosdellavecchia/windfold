@@ -35,6 +35,8 @@ export interface Presence {
   notes: Record<string, string>
 }
 
+const apiBase = `${import.meta.env.BASE_URL}api`
+
 /** Fire-and-forget: one beacon per finished flight. */
 export function postFlight(
   world: number,
@@ -45,7 +47,7 @@ export function postFlight(
   name: string,
 ) {
   try {
-    void fetch('/api/flight', {
+    void fetch(`${apiBase}/flight`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -72,7 +74,7 @@ export function postFlight(
  */
 export function postNote(world: number, x: number, z: number, text: string) {
   try {
-    void fetch('/api/note', {
+    void fetch(`${apiBase}/note`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ w: world, x: Math.round(x), z: Math.round(z), t: text }),
@@ -85,7 +87,7 @@ export function postNote(world: number, x: number, z: number, text: string) {
 
 export async function fetchPresence(world: number): Promise<Presence | null> {
   try {
-    const r = await fetch(`/api/world?id=${world}`)
+    const r = await fetch(`${apiBase}/world?id=${world}`)
     if (!r.ok) return null
     const data = (await r.json()) as {
       m: number
