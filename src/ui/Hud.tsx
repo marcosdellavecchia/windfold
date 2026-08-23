@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useHud } from '../state'
+import { onPad } from '../gamepad'
 import type { World } from '../sim/world'
 import { recordOf, savedState } from '../game/persist'
 import { copyCard, shareCard } from '../game/share'
@@ -268,9 +269,32 @@ function Note({
  * Once clicked, the button is gone and a confirmation stands in its place —
  * the card is on the clipboard, there is nothing further to press. The state
  * resets naturally when the results screen unmounts on the next launch.
+ *
+ * LB copies the card while this is on screen. A controller has no cursor, so
+ * without a binding the share card — rule 4, and most of how the game spreads —
+ * would be the one thing a pad simply could not reach. Unlabelled on purpose:
+ * controller players are the edge case, and rule 7's two seconds belong to the
+ * pointer that nearly everyone arrives with. The subscription lives here so the
+ * button owns it for exactly as long as it is offered.
  */
 function Share({ world, pct }: { world: World; pct: number | null }) {
   const [copied, setCopied] = useState(false)
+
+  const copy = async () => {
+    const rec = recordOf(savedState(), world.day)
+    if (await copyCard(shareCard(world, rec, pct))) setCopied(true)
+  }
+
+  // Re-bound whenever the card's contents change, so LB never copies a stale
+  // one, and dropped once it has been copied — there is nothing left to press.
+  useEffect(() => {
+    if (copied) return
+    return onPad('share', () => {
+      void copy()
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [copied, world, pct])
+
   if (copied) {
     return (
       <div className="shareDone" data-ui>
@@ -279,14 +303,7 @@ function Share({ world, pct }: { world: World; pct: number | null }) {
     )
   }
   return (
-    <button
-      className="share"
-      data-ui
-      onClick={async () => {
-        const rec = recordOf(savedState(), world.day)
-        if (await copyCard(shareCard(world, rec, pct))) setCopied(true)
-      }}
-    >
+    <button className="share" data-ui onClick={() => void copy()}>
       Share
     </button>
   )

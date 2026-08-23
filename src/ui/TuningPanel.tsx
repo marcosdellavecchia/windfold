@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { TUNING, resetTuning, type Tuning } from '../sim/tuning'
 import { BIOME_ORDER } from '../sim/palette'
 import { isTurboEnabled, isTyping, setPointerCaptured, setTurboEnabled } from '../input'
+import { onPad } from '../gamepad'
+import { hudDraft } from '../state'
 import type { World } from '../sim/world'
 import { GRADE, TONE_MODES, resetGrade } from '../render/grade'
 
@@ -85,7 +87,22 @@ export function TuningPanel({ day, onDay, world }: { day: number; onDay: (d: num
       if (e.code === 'KeyR') onDay(randomDay())
     }
     window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    // The pad's equivalents: Back for T, Y for R, B to back out. Y is held back
+    // mid-flight, unlike R — pressing R is a deliberate act, but a player still
+    // hunting for the launch button will walk the face buttons, and rerolling
+    // the world out from under a flight in progress is not a thing to discover
+    // by accident.
+    const offPanel = onPad('panel', () => setOpen((v) => !v))
+    const offReroll = onPad('reroll', () => {
+      if (hudDraft.phase !== 'flying') onDay(randomDay())
+    })
+    const offCancel = onPad('cancel', () => setOpen(false))
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      offPanel()
+      offReroll()
+      offCancel()
+    }
   }, [onDay])
 
   // While the panel is up, the pointer belongs to it: sliders must be usable

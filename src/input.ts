@@ -1,9 +1,19 @@
 /**
  * Pointer position drives pitch and roll — mouse move on desktop, drag on touch.
- * Same scheme on both, per the design rules. Nothing else is bound except a
- * keyboard fallback, which exists so the flight model can be tested without a
- * hand on the mouse.
+ * Same scheme on both, per the design rules. Beyond that there is a keyboard
+ * fallback, which exists so the flight model can be tested without a hand on the
+ * mouse, and a gamepad, which is a first-class way to play: everything a
+ * keyboard can do a controller can do too. See `gamepad.ts` for the mapping.
  */
+import {
+  attachGamepad,
+  isPadActive,
+  isPadTurboHeld,
+  onPad,
+  padAxis,
+  releasePad,
+} from './gamepad'
+
 export interface Axis {
   x: number
   y: number
@@ -43,7 +53,8 @@ export function isTyping(e: KeyboardEvent): boolean {
  * flying: it is the testing fallback, and one hand on the sliders with the
  * other on WASD is exactly the tuning workflow. The pointer position keeps
  * being tracked underneath, so steering resumes from wherever the cursor
- * actually is the moment the panel closes.
+ * actually is the moment the panel closes. A controller keeps flying for the
+ * same reason the keyboard does — it is not the thing dragging the slider.
  */
 export function setPointerCaptured(v: boolean) {
   captured = v
@@ -80,7 +91,9 @@ export function setTurboEnabled(v: boolean) {
   if (!v) turboHeld = false
 }
 
-export const isTurboHeld = () => turboEnabled && turboHeld
+// A held mouse button or a held shoulder/trigger — one gate for both, so the
+// mode stays shut for everyone while it is switched off.
+export const isTurboHeld = () => turboEnabled && (turboHeld || isPadTurboHeld())
 
 let touchActive = false
 let touchOriginX = 0
@@ -96,6 +109,10 @@ export function attachInput(target: HTMLElement | Window = window): () => void {
 
   const onMouseMove = (e: MouseEvent) => {
     if (sawTouch) return
+    // Moving the mouse takes steering back off the pad. The two cannot both own
+    // the axes — the mouse steers by absolute cursor position, so whichever was
+    // touched last is the one the player has their hand on.
+    releasePad()
     pointerX = (e.clientX / window.innerWidth) * 2 - 1
     pointerY = -((e.clientY / window.innerHeight) * 2 - 1)
   }
@@ -198,6 +215,11 @@ export function attachInput(target: HTMLElement | Window = window): () => void {
     turboHeld = false
   }
 
+  // A controller's A / Start reaches the same handler a click and Space do, so
+  // launching and restarting stay one code path with one meaning.
+  const offPadCommit = onPad('commit', () => onCommit())
+  const detachPad = attachGamepad()
+
   el.addEventListener('mousemove', onMouseMove as EventListener)
   el.addEventListener('touchstart', onTouchStart as EventListener, { passive: true })
   el.addEventListener('touchmove', onTouchMove as EventListener, { passive: false })
@@ -211,6 +233,8 @@ export function attachInput(target: HTMLElement | Window = window): () => void {
   el.addEventListener('blur', onBlur as EventListener)
 
   return () => {
+    offPadCommit()
+    detachPad()
     el.removeEventListener('mousemove', onMouseMove as EventListener)
     el.removeEventListener('touchstart', onTouchStart as EventListener)
     el.removeEventListener('touchmove', onTouchMove as EventListener)
@@ -227,7 +251,13 @@ export function attachInput(target: HTMLElement | Window = window): () => void {
 
 /** Resolve the current control axes. Called once per frame by the simulation. */
 export function readAxis(dt: number): Axis {
-  if (captured) {
+  if (isPadActive()) {
+    // A pad that has been touched owns steering outright, panel open or not —
+    // the same standing the keyboard has, and for the same reason.
+    const pad = padAxis()
+    axis.x = pad.x
+    axis.y = pad.y
+  } else if (captured) {
     axis.x = 0
     axis.y = 0
   } else if (sawTouch) {

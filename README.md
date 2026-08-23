@@ -166,6 +166,52 @@ Identical scheme on both platforms. Nothing else: no throttle, no yaw key.
 Roll must visibly bank the plane. Banking is what makes the game look good in a
 screen recording, which is most of how it will spread.
 
+**Pitch is inverted by default** — cursor and stick forward is nose down, the way
+every aircraft control has worked since aircraft had controls. Pulling back to flare
+is the game's core gesture, and it should be a pull. `invertPitch` in the tuning
+panel flips it back.
+
+### Controller
+
+A pad is a first-class way to play and a deliberately invisible one: everything the
+keyboard and mouse can do a controller can do too, and **nothing about the interface
+changes when one is plugged in**. Controller players are the edge case; rule 7's two
+seconds of discoverability belong to the pointer nearly everyone arrives with, so the
+hints keep naming the mouse and no button labels appear anywhere on screen.
+
+Standard-mapping button numbers, which is what a wireless Xbox controller reports on
+every browser that matters:
+
+| Input | Does |
+| --- | --- |
+| Left stick, D-pad | Steer — pitch and roll |
+| A, Start | Launch / fly again |
+| RB, RT (hold) | Turbo, once it is switched on in the tuning panel |
+| LB | Copy the share card, on the results screen |
+| X | Music on / off |
+| Y | New random world — ignored mid-flight, unlike R |
+| Back | Toggle the tuning panel |
+| B | Close the tuning panel |
+
+Right stick is unbound: there is no camera to fly.
+
+The stick gets a radial deadzone, saturation, and a mildly expo curve — a squarely cut
+deadzone leaks roll when the stick is pushed straight forward, which on a glider reads
+as the aircraft refusing to fly straight. Steering latches onto whichever device was
+touched last, the way it already latches onto touch: the mouse steers by absolute
+cursor position, so a controller player whose cursor happens to rest in a corner would
+otherwise be flying at full deflection with the stick centred. Move the mouse and the
+mouse has it back.
+
+Two things a pad deliberately cannot reach: the call-sign and note fields, which are
+text entry, and the tuning sliders. Neither is reachable from the keyboard alone
+either.
+
+Music is the one caveat. A gamepad press is not "user activation" as far as browsers
+are concerned, so a pad cannot unlock the `AudioContext` on its own — on a desktop the
+click that focused the tab has almost always already done it, but a controller-only
+session may start silent.
+
 ---
 
 ## Flight model

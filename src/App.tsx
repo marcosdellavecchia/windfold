@@ -99,6 +99,7 @@ import { Scene } from './render/Scene'
 import { Hud } from './ui/Hud'
 import { TuningPanel } from './ui/TuningPanel'
 import { attachInput } from './input'
+import { onPad } from './gamepad'
 import { TUNING } from './sim/tuning'
 import { useMusic } from './audio/useMusic'
 import { AudioToggle } from './ui/AudioToggle'
@@ -240,6 +241,10 @@ export default function App() {
   const music = useMusic(world.seed)
 
   useEffect(() => attachInput(), [])
+
+  // X mutes. The audio toggle is a click target and nothing else, so without
+  // this it is the one control a pad in hand cannot reach.
+  useEffect(() => onPad('mute', music.toggle), [music.toggle])
 
   // Cast sun shadows — the one real GPU cost in the renderer, so it is a
   // quality setting rather than a fact: on for anything with a mouse, off for

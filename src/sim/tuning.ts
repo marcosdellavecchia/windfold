@@ -56,7 +56,12 @@ export const TUNING = {
   aoaLimit: 0.94,
   /** Pointer smoothing, 0..1 per 60 Hz frame. Lower = heavier feel. */
   inputSmoothing: 0.22,
-  invertPitch: false,
+  /**
+   * Stick and cursor forward is nose *down*, the way every aircraft control has
+   * worked since aircraft had controls. On by default: pulling back to flare is
+   * the game's core gesture, and it should be a pull.
+   */
+  invertPitch: true,
 
   // --- launch -------------------------------------------------------------
   launchSpeed: 26,
