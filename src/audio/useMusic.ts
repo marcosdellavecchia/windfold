@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Music } from './music'
 import { hudDraft } from '../state'
+import { flightVisual } from '../render/presentation'
 
 const STORAGE_KEY = 'windfold.muted'
 
@@ -45,7 +46,8 @@ export function useMusic(seed: number) {
     // opens the lowpass, and a gentle landing rings its bell once.
     let wasDown = false
     const feed = window.setInterval(() => {
-      const flying = hudDraft.phase === 'flying'
+      const flying = (hudDraft.phase === 'flying' || flightVisual.replaying) && !document.hidden
+      music.setFlight(flightVisual.speed, flightVisual.stall, flying)
       music.setLift(flying ? hudDraft.airLift : 0)
       music.setAltitude(Math.min(hudDraft.altitude / 900, 1))
       const down = hudDraft.phase === 'down'

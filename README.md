@@ -77,6 +77,59 @@ renaming reshuffles every world, which must never happen once scores exist.
 
 ---
 
+## Graphics refinement
+
+The renderer now uses rough dielectric materials for the landscape and aircraft.
+Wet shorelines carry broad highlights while dry ground stays matte; baked horizon
+occlusion reduces skylight in enclosed valleys without a fullscreen post-processing
+pass. The paper dart has filtered fibre grain, fine fold edges, and restrained
+emission so its shape responds to the sun.
+
+Cumulus billboards have turbulent silhouettes, rounded per-pixel lighting, shaded
+cores, and backlit silver edges. Trees and flexible understory sway with the day's
+wind; the shadow pass uses the same deformation and roots stay fixed. Aircraft
+cloud shade now matches the landscape's noise scales and thresholds.
+
+These changes preserve the procedural assets, world seeds, and flight model, and
+add no dependencies. They add terrain build work and shader arithmetic; mobile
+frame times and all six biomes still need a visual check on real hardware. Use
+`npm run shader:check` for uniform checks (including patched built-in materials),
+and `npm run build` for TypeScript and production validation.
+
+## Scenic flight and presentation controls
+
+- **Scenic routes:** press `T` and enable **scenic route** in the tuning panel.
+  The option is disabled by default and is absent from the normal game UI. Gold rings
+  mark the next passage, with distance and turn guidance during flight. Routes are
+  generated from the longer of a thermal-chasing and a hands-off pilot run. Some
+  days also offer a dry landing meadow after the final passage. A gentle touchdown
+  inside its ring completes the finish; nearby landmarks can be discovered along
+  the way. These are optional per-flight goals, separate from the distance record.
+- **Final-approach replay:** after a flight, choose **Replay final approach** to
+  watch up to the final eight seconds at 0.8× speed. **Return to results** skips it;
+  normal launch controls still start the next flight immediately. Replays use a
+  bounded pose buffer and never rerun the physics, scores, or presence submission.
+- **Presentation:** the game always renders its full visual treatment: high-resolution
+  shadows, detailed vegetation, maximum ground cover, and cascade spray. A system
+  reduced-motion preference removes bank-following, speed FOV changes, stall buffet,
+  and animated paper and vegetation flutter without reducing visual quality.
+- **Flight sound:** generated wind grows with airspeed, with a paper rustle near
+  stalls. The existing sound toggle mutes these effects together with the music.
+
+Rock shoulders and clustered tree crowns give ridges more varied silhouettes.
+Grass, flowers, stones, and shoreline driftwood stream near the camera and fade
+before recycling. Cascade spray originates on the rendered river mesh. Touchdown
+adds dust or water spray, expanding water ripples, and a settling paper pose.
+These are presentation details; terrain seeds and the collision surface are
+unchanged. Restart now also clears debug turbo's unscored flag correctly.
+
+`npm run presentation:check` checks replay wrapping/interpolation/reset, directional
+swept gate crossing, route repeatability/reachability across fourteen worlds, and
+landing/reset eligibility.
+`npm run shader:check` checks uniforms in all custom and patched shaders. These
+checks do **not** compile shaders on a GPU or measure frame rates. Browser visual,
+audio, touch-layout, and real-device performance verification remain outstanding.
+
 ## Running it
 
 ```sh

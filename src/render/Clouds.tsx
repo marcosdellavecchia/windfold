@@ -86,7 +86,7 @@ export function Clouds({ world }: { world: World }) {
       depthWrite: false,
       uniforms: {
         uLit: { value: new Color(0xffffff).lerp(new Color(rgbToHex(pal.sun)), 0.28) },
-        uShade: { value: new Color(rgbToHex(pal.skyHorizon)).lerp(new Color(0xffffff), 0.55) },
+        uShade: { value: new Color(rgbToHex(pal.skyHorizon)).lerp(new Color(0xffffff), 0.32) },
         uSunDir: { value: world.sunDir.clone() as Vector3 },
         uTime: { value: 0 },
         ...AIR_FOG_UNIFORMS,
@@ -99,7 +99,8 @@ export function Clouds({ world }: { world: World }) {
         varying vec2 vUv;
         varying float vLift;
         varying vec3 vAirWorld;
-        varying float vSun;
+        varying vec3 vCloudSun;
+        varying float vPhase;
         uniform vec3 uSunDir;
         uniform float uTime;
 
@@ -128,7 +129,8 @@ export function Clouds({ world }: { world: World }) {
 
           // How much this puff faces the sun, for a warm rim on the sunward side.
           vec3 toSun = normalize((viewMatrix * vec4(uSunDir, 0.0)).xyz);
-          vSun = clamp(dot(normalize(vec3(position.xy, 0.6)), toSun) * 0.5 + 0.5, 0.0, 1.0);
+          vCloudSun = toSun;
+          vPhase = aPhase;
         }
       `,
       fragmentShader: /* glsl */ `
@@ -137,7 +139,8 @@ export function Clouds({ world }: { world: World }) {
         varying vec2 vUv;
         varying float vLift;
         varying vec3 vAirWorld;
-        varying float vSun;
+        varying vec3 vCloudSun;
+        varying float vPhase;
 
         ${AIR_FOG_GLSL}
 
@@ -147,12 +150,26 @@ export function Clouds({ world }: { world: World }) {
           return fract(p.x * p.y);
         }
 
+        float cloudNoise(vec2 p) {
+          vec2 i = floor(p);
+          vec2 f = fract(p);
+          f = f * f * (3.0 - 2.0 * f);
+          return mix(mix(cdHash(i), cdHash(i + vec2(1.0, 0.0)), f.x),
+                     mix(cdHash(i + vec2(0.0, 1.0)), cdHash(i + 1.0), f.x), f.y);
+        }
+
         void main() {
-          // Soft round puff. The falloff is wide and gentle so overlapping puffs
-          // merge into one mass instead of showing their own outlines.
-          float d = length(vUv - 0.5) * 2.0;
-          float a = 1.0 - smoothstep(0.15, 1.0, d);
-          a *= a;
+          vec2 q = (vUv - 0.5) * 2.0;
+          float d = length(q);
+          // Stable, per-puff turbulence breaks the circular billboard silhouette.
+          // No animated high-frequency noise: drifting geometry carries the detail.
+          vec2 p = q * 3.4 + vPhase * 7.3;
+          float density = cloudNoise(p) * 0.58
+                        + cloudNoise(p * 2.07 + 13.1) * 0.28
+                        + cloudNoise(p * 4.13 + 31.7) * 0.14;
+          float edge = d + (density - 0.5) * 0.24;
+          float body = 1.0 - smoothstep(0.18, 1.0, edge);
+          float a = 1.0 - exp(-body * body * 2.4);
           if (a < 0.004) discard;
 
           // The shared directional haze, so a cloud sinks into the same warm air
@@ -164,7 +181,14 @@ export function Clouds({ world }: { world: World }) {
           // Cumulus is lit on top and along the sunward face, shaded underneath.
           float up = clamp(vLift * 0.6 + (1.0 - vUv.y) * -0.4 + vUv.y * 0.7, 0.0, 1.0);
           vec3 col = mix(uShade, uLit, up);
-          col = mix(col, uLit, vSun * 0.35);
+          // Reconstruct a rounded surface per pixel, with a dark core and a
+          // forward-scattered silver edge when the sun sits behind the cloud.
+          vec3 puffNormal = normalize(vec3(q, sqrt(max(1.0 - d * d, 0.04))));
+          float sunlit = clamp(dot(puffNormal, vCloudSun) * 0.5 + 0.5, 0.0, 1.0);
+          col *= 0.78 + sunlit * 0.3 + density * 0.12;
+          float silver = pow(clamp(d, 0.0, 1.0), 4.0)
+                       * pow(clamp(-vCloudSun.z, 0.0, 1.0), 3.0);
+          col += uLit * silver * 0.48;
           col = mix(col, airFogColor(airRay / max(airDist, 1e-4)), fogA);
           // A puff is one wide shallow radial ramp — the exact shape banding
           // loves. Same quarter-LSB the sky carries.

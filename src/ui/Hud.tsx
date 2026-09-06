@@ -8,6 +8,9 @@ import { callsign, rerollCallsign, setCallsign } from '../game/callsign'
 import { cleanNote, NOTE_MAX } from '../game/note'
 import { postNote } from '../game/net'
 import { percentileOf } from '../game/standing'
+import { useSettings } from '../game/settings'
+import { requestReplay, stopReplay } from '../game/replay'
+import { LANDMARK_NAMES } from '../sim/landmark'
 
 const metres = (v: number) => Math.round(v).toLocaleString('en-US')
 
@@ -34,10 +37,11 @@ export function Hud({
   onNote?: (x: number, z: number, text: string) => void
 }) {
   const s = useHud()
+  const settings = useSettings()
   const pct = percentileOf(s.best, pool)
 
   return (
-    <div className="hud">
+    <div className={`hud${settings.reducedMotion ? ' reducedMotion' : ''}${s.replaying ? ' replaying' : ''}`}>
       {/*
         Debug turbo's speed effect. A real motion blur wants a post-processing
         pass and a render target, neither of which this game has — but the blur
@@ -61,7 +65,7 @@ export function Hud({
         Before the HUD's own text in paint order, so the readouts stay sharp —
         the same arrangement the speed rush above already relies on.
       */}
-      {s.phase !== 'flying' && <div className="diorama" />}
+      {s.phase !== 'flying' && !s.replaying && !settings.reducedMotion && <div className="diorama" />}
 
       {/* Flight instruments — thin and minimal, per the art direction. */}
       <div className={`instruments ${s.phase === 'down' ? 'dim' : ''}`}>
@@ -88,7 +92,17 @@ export function Hud({
         </div>
       </div>
 
-      <Vario lift={s.airLift} stall={s.stall} phase={s.phase} />
+      {!s.replaying && <Vario lift={s.airLift} stall={s.stall} phase={s.phase} />}
+      {s.replaying && <div className="replayBar" data-ui>
+        <span>Final approach <small>0.8× replay</small></span>
+        <button type="button" onClick={stopReplay}>Return to results</button>
+      </div>}
+      {settings.routes && s.phase === 'flying' && !s.cheated && <div className="routeReadout">
+        <div className="routeEyebrow">{s.routeTitle}</div>
+        <div aria-live="polite">{s.routeGates < s.routeTotal ? `Passage ${s.routeGates + 1} of ${s.routeTotal}` : s.routeHasLanding ? 'Find the landing meadow' : 'Route complete'}</div>
+        {(s.routeGates < s.routeTotal || s.routeHasLanding) && <small>{metres(s.routeDistance)} m · {Math.abs(s.routeTurn) < 0.45 ? 'ahead' : s.routeTurn > 0 ? 'turn right →' : '← turn left'}</small>}
+        {s.landmarkFound && <small>Discovered the {LANDMARK_NAMES[world.landmark.kind]}</small>}
+      </div>}
 
       {s.phase === 'ready' && (
         <div className="prompt">
@@ -102,12 +116,13 @@ export function Hud({
               so it cannot be misread as the player's own distance. */}
           {metresFlown >= 100 && <div className="others">pilots have flown {kmFlown(metresFlown)} here</div>}
           <div className="hint">Move to steer · click or space to launch</div>
+          {settings.routes && <div className="routeCaption">{s.routeTitle} · {s.routeTotal} passages{ s.routeHasLanding ? ' and a landing meadow' : ''}</div>}
           {/* Sign the paper before it flies — on the ramp, ignorable forever. */}
           <Signature />
         </div>
       )}
 
-      {s.phase === 'down' && (
+      {s.phase === 'down' && !s.replaying && (
         <div className="result">
           {s.newBest && <div className="fanfare">New best</div>}
           {/* The one guaranteed-negative moment of every flight, made winnable:
@@ -133,7 +148,12 @@ export function Hud({
               {pct >= 100 ? 'The longest flight logged here' : `Farther than ${pct}% of today's flights`}
             </div>
           )}
+          {settings.routes && !s.cheated && <div className="routeResult">
+            {s.routeLanding ? 'Scenic route · perfect finish' : s.routeGates === s.routeTotal && s.routeTotal > 0 ? 'All passages flown' : `${s.routeGates} / ${s.routeTotal} passages flown`}
+            {s.landmarkFound && <small>Found the {LANDMARK_NAMES[world.landmark.kind]}</small>}
+          </div>}
           <Share world={world} pct={pct} />
+          {s.replayAvailable && <button type="button" className="replayButton" data-ui onClick={requestReplay}>Replay final approach</button>}
           <div className="again">Fly again</div>
           <Signature />
           {/* The word left with the paper. Only here, never on the ramp: it is

@@ -17,6 +17,7 @@ import { mulberry32 } from '../sim/rng'
 import { AIR_FOG_GLSL, AIR_FOG_UNIFORMS, CLOUD_SHADOW_GLSL, cloudShadowSeed } from './atmosphere'
 import { WATER_OPTICS_GLSL } from './waterOptics'
 import { TONEMAP_GLSL } from './grade'
+import { CascadeMist } from './CascadeMist'
 
 /**
  * Rivers, as geometry.
@@ -674,7 +675,7 @@ export function Streams({ world }: { world: World }) {
   })
 
   if (!mesh) return null
-  return <primitive object={mesh} />
+  return <><primitive object={mesh} /><CascadeMist geometry={mesh.geometry} world={world} /></>
 }
 
 /**

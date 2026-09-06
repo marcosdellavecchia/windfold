@@ -1,8 +1,8 @@
 import { useMemo } from 'react'
 import { useFrame } from '@react-three/fiber'
-import { BufferAttribute, BufferGeometry, MeshLambertMaterial, Vector2 } from 'three'
+import { BufferAttribute, BufferGeometry, MeshStandardMaterial, Vector2 } from 'three'
 import type { World } from '../sim/world'
-import { HALF_WORLD, clamp01, smoothstep } from '../sim/terrain'
+import { HALF_WORLD, clamp01, smoothstep, type Heightfield } from '../sim/terrain'
 import { Noise2D, fbm } from '../sim/noise'
 import { mulberry32 } from '../sim/rng'
 import type { BiomeId, Rgb } from '../sim/palette'
@@ -104,14 +104,14 @@ export function Terrain({ world }: { world: World }) {
 }
 
 /**
- * Lambert with the cloud-shadow field injected. The multiply happens before the
+ * Rough dielectric ground with the cloud-shadow field injected. The multiply happens before the
  * fog include on purpose: shade applied after fog would survive into the haze,
  * and the horizon would mottle where everything is supposed to converge on one
  * colour. Trees deliberately do not get the shadow — at their size the
  * mismatch is unreadable, and it saves patching a second material.
  */
-function makeMaterial(world: World): MeshLambertMaterial {
-  const mat = new MeshLambertMaterial({ vertexColors: true })
+function makeMaterial(world: World): MeshStandardMaterial {
+  const mat = new MeshStandardMaterial({ vertexColors: true, roughness: 0.92, metalness: 0 })
   const uCloudTime = { value: 0 }
   const uCloudWind = { value: new Vector2(world.air.windX, world.air.windZ) }
   const uCloudSeed = { value: cloudShadowSeed(world.seed) }
@@ -120,15 +120,16 @@ function makeMaterial(world: World): MeshLambertMaterial {
     shader.uniforms.uCloudTime = uCloudTime
     shader.uniforms.uCloudWind = uCloudWind
     shader.uniforms.uCloudSeed = uCloudSeed
+    shader.uniforms.uGroundWater = { value: world.heightfield.hasWater ? world.heightfield.waterLevel : -100000 }
     Object.assign(shader.uniforms, AIR_FOG_UNIFORMS)
     shader.vertexShader = shader.vertexShader
       .replace(
         '#include <common>',
-        '#include <common>\nvarying vec2 vCloudXZ;\nvarying float vAirY;\nvarying float vEyeDist;\nvarying vec3 vWorldNormal;',
+        '#include <common>\nattribute float skyVisibility;\nvarying float vSkyVisibility;\nvarying vec2 vCloudXZ;\nvarying float vAirY;\nvarying float vEyeDist;\nvarying vec3 vWorldNormal;',
       )
       .replace(
         '#include <begin_vertex>',
-        '#include <begin_vertex>\nvCloudXZ = (modelMatrix * vec4(position, 1.0)).xz;\n' +
+        '#include <begin_vertex>\nvSkyVisibility = skyVisibility;\nvCloudXZ = (modelMatrix * vec4(position, 1.0)).xz;\n' +
           'vAirY = (modelMatrix * vec4(position, 1.0)).y;\n' +
           // The relief below bends the normal in world space, because the field it
           // bends by is a function of world xz. Lighting wants view space, so the
@@ -141,6 +142,7 @@ function makeMaterial(world: World): MeshLambertMaterial {
       .replace(
         '#include <common>',
         `#include <common>
+        varying float vSkyVisibility;
         varying vec2 vCloudXZ;
         varying float vAirY;
         varying float vEyeDist;
@@ -148,6 +150,7 @@ function makeMaterial(world: World): MeshLambertMaterial {
         uniform float uCloudTime;
         uniform vec2 uCloudWind;
         uniform float uCloudSeed;
+        uniform float uGroundWater;
         ${CLOUD_SHADOW_GLSL}
         ${AIR_FOG_GLSL}
         ${GRADED_GLSL}
@@ -200,6 +203,25 @@ function makeMaterial(world: World): MeshLambertMaterial {
           return trNoise(xz * (1.0 / 42.0) + 7.3) * (3.0 * w1)
                + trNoise(mat2(0.857, 0.515, -0.515, 0.857) * xz * (1.0 / 4.3) + 2.1) * (0.5 * w2)
                + trNoise(mat2(0.292, 0.956, -0.956, 0.292) * xz * (1.0 / 1.5) + 11.7) * (0.11 * w3);
+        }`,
+      )
+      .replace(
+        '#include <lights_fragment_end>',
+        `#include <lights_fragment_end>
+        // The surrounding ridges occlude skylight, never the direct sun.
+        reflectedLight.indirectDiffuse *= vSkyVisibility;`,
+      )
+      .replace(
+        '#include <roughnessmap_fragment>',
+        `#include <roughnessmap_fragment>
+        {
+          // Wet margins reflect a broad sun highlight; dry meadows stay matte.
+          float mineral = smoothstep(0.12, 0.65, 1.0 - normalize(vWorldNormal).y);
+          float wet = (1.0 - smoothstep(0.5, 9.0, vAirY - uGroundWater))
+                    * (1.0 - mineral);
+          float grain = trNoise(vCloudXZ * 0.045 + 19.7);
+          roughnessFactor = mix(mix(0.96, 0.78, mineral), 0.38, wet);
+          roughnessFactor = clamp(roughnessFactor + (grain - 0.5) * 0.08, 0.32, 1.0);
         }`,
       )
       .replace(
@@ -287,6 +309,7 @@ function buildGeometry(world: World): BufferGeometry {
 
   const positions = new Float32Array(count * 3)
   const colors = new Float32Array(count * 3)
+  const visibility = new Float32Array(count)
   const range = Math.max(hf.max - hf.min, 1)
 
   const c: Rgb = [0, 0, 0]
@@ -336,6 +359,7 @@ function buildGeometry(world: World): BufferGeometry {
       const x = -HALF_WORLD + ix * hf.cell
       const z = -HALF_WORLD + iz * hf.cell
       const h = hf.data[i]
+      visibility[i] = groundSkyVisibility(hf, ix, iz)
 
       positions[i * 3] = x
       positions[i * 3 + 1] = h
@@ -573,6 +597,7 @@ function buildGeometry(world: World): BufferGeometry {
   const geo = new BufferGeometry()
   geo.setAttribute('position', new BufferAttribute(positions, 3))
   geo.setAttribute('color', new BufferAttribute(colors, 3))
+  geo.setAttribute('skyVisibility', new BufferAttribute(visibility, 1))
   geo.setIndex(new BufferAttribute(indices, 1))
   geo.computeVertexNormals()
   geo.computeBoundingSphere()
@@ -598,4 +623,26 @@ function hash2(x: number, y: number): number {
   let h = x * 374761393 + y * 668265263
   h = (h ^ (h >>> 13)) * 1274126177
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296
+}
+
+
+const SKY_DIRECTIONS = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, 1], [1, -1], [-1, -1]]
+const SKY_STEPS = [2, 6, 18]
+
+/** Baked horizon occlusion: 24 height reads per vertex, no screen-space pass. */
+function groundSkyVisibility(hf: Heightfield, ix: number, iz: number): number {
+  const n = hf.seg + 1
+  const h = hf.data[iz * n + ix]
+  let occlusion = 0
+  for (const [dx, dz] of SKY_DIRECTIONS) {
+    let horizon = 0
+    for (const step of SKY_STEPS) {
+      const sx = Math.max(0, Math.min(hf.seg, ix + dx * step))
+      const sz = Math.max(0, Math.min(hf.seg, iz + dz * step))
+      const distance = Math.hypot(sx - ix, sz - iz) * hf.cell
+      if (distance > 0) horizon = Math.max(horizon, (hf.data[sz * n + sx] - h) / distance)
+    }
+    occlusion += horizon / Math.sqrt(1 + horizon * horizon)
+  }
+  return 1 - 0.65 * occlusion / SKY_DIRECTIONS.length
 }

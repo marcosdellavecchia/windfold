@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import {
   BufferAttribute,
@@ -11,6 +11,9 @@ import {
   InstancedMesh,
   Matrix4,
   MeshLambertMaterial,
+  MeshDepthMaterial,
+  RGBADepthPacking,
+  Vector2,
   Quaternion,
   Vector3,
 } from 'three'
@@ -34,6 +37,7 @@ import { mulberry32 } from '../sim/rng'
 import { sampleGradient, sampleHeight, sampleWet, smoothstep, clamp01 } from '../sim/terrain'
 import type { Palette, Rgb } from '../sim/palette'
 import { patchAirFog } from './atmosphere'
+import { getSettings } from '../game/settings'
 
 /** Scatter cell size, metres. */
 const CELL = 384
@@ -74,13 +78,14 @@ const BANK_MAX = 0.82
  */
 export function Trees({ world }: { world: World }) {
   const camera = useThree((s) => s.camera)
+  const density = 1
 
   const built = useMemo(() => {
     const pal = world.palette
     const trunkTint = 0.42
 
-    const conifer = coniferGeometry(trunkTint)
-    const broadleaf = broadleafGeometry(trunkTint)
+    const conifer = coniferGeometry(trunkTint, true)
+    const broadleaf = broadleafGeometry(trunkTint, true)
     const details = DETAIL[world.biome]
     const spec2 = DETAIL2[world.biome]
     const day = forestDay(world.seed)
@@ -102,7 +107,9 @@ export function Trees({ world }: { world: World }) {
     }
     const accent = mix(pal.sun, pal.low, 0.55)
 
-    const make = (geo: BufferGeometry, cap: number) => {
+    const breezeTime = { value: 0 }
+    const breezeWind = { value: new Vector2(world.air.windX, world.air.windZ) }
+    const make = (geo: BufferGeometry, cap: number, living = false) => {
       const mat = new MeshLambertMaterial({ vertexColors: true })
       // Trees carry to the fog limit, where a flat-fogged silhouette against
       // directionally-hazed terrain would show as the wrong colour of tree.
@@ -114,17 +121,60 @@ export function Trees({ world }: { world: World }) {
       // Costs nothing while the renderer's shadow map is off, so it is not
       // gated: when shadows are on, the woods are most of what casts them.
       mesh.castShadow = true
+      if (living) {
+        // Share the exact deformation with the depth pass so the moving canopy
+        // never separates from its shadow. Roots are pinned to the ground.
+        const depth = new MeshDepthMaterial({ depthPacking: RGBADepthPacking })
+        const bend: typeof mat.onBeforeCompile = (shader) => {
+          shader.uniforms.uBreezeTime = breezeTime
+          shader.uniforms.uBreezeWind = breezeWind
+          shader.vertexShader = shader.vertexShader
+            .replace('#include <common>', `#include <common>
+              uniform float uBreezeTime;
+              uniform vec2 uBreezeWind;
+            `)
+            .replace('#include <begin_vertex>', `#include <begin_vertex>
+              #ifdef USE_INSTANCING
+                vec3 root = instanceMatrix[3].xyz;
+                float phase = dot(root.xz, vec2(0.013, 0.017));
+                float gust = sin(uBreezeTime * 0.85 + phase) * 0.65
+                           + sin(uBreezeTime * 1.7 + phase * 1.93) * 0.35;
+                float tip = max(position.y, 0.0);
+                float speed = length(uBreezeWind);
+                vec2 windDir = uBreezeWind / max(speed, 0.001);
+                // Project world wind onto the instance's rotated local axes.
+                vec2 localWind = vec2(
+                  dot((instanceMatrix[0].xyz / max(length(instanceMatrix[0].xyz), 0.0001)).xz, windDir),
+                  dot((instanceMatrix[2].xyz / max(length(instanceMatrix[2].xyz), 0.0001)).xz, windDir)
+                );
+                transformed.xz += localWind * tip * tip * gust
+                                * (0.012 + min(speed, 18.0) * 0.0015);
+              #endif
+            `)
+        }
+        const fog = mat.onBeforeCompile
+        mat.onBeforeCompile = (shader, renderer) => {
+          fog.call(mat, shader, renderer)
+          bend.call(mat, shader, renderer)
+        }
+        mat.customProgramCacheKey = () => 'windfold-foliage-wind-v1'
+        depth.onBeforeCompile = bend
+        depth.customProgramCacheKey = () => 'windfold-foliage-depth-v1'
+        mesh.customDepthMaterial = depth
+      }
       return mesh
     }
 
     return {
-      coniferMesh: make(conifer, MAX_PER_SPECIES),
-      broadleafMesh: make(broadleaf, MAX_PER_SPECIES),
+      breezeTime,
+      density,
+      coniferMesh: make(conifer, Math.round(MAX_PER_SPECIES * density), true),
+      broadleafMesh: make(broadleaf, Math.round(MAX_PER_SPECIES * density), true),
       // One mesh and one palette per understory species, in DETAIL's order —
       // the scatter walks the same list, so the indices always agree.
-      detailMeshes: details.map((d) => make(detailGeometry(d.kind, trunkTint), MAX_DETAIL)),
+      detailMeshes: details.map((d) => make(detailGeometry(d.kind, trunkTint), Math.round(MAX_DETAIL * density), isWindblown(d.kind))),
       detailPalettes: details.map((d) => detailColours(d.kind, pal)),
-      detail2Mesh: spec2 ? make(detailGeometry(spec2.kind, trunkTint), MAX_DETAIL2) : null,
+      detail2Mesh: spec2 ? make(detailGeometry(spec2.kind, trunkTint), Math.round(MAX_DETAIL2 * density), isWindblown(spec2.kind)) : null,
       detail2Palette: spec2 ? detailColours(spec2.kind, pal) : [],
       canopy,
       accent,
@@ -143,12 +193,25 @@ export function Trees({ world }: { world: World }) {
     }
   }, [world])
 
-  const last = useRef(new Vector3(1e9, 0, 1e9))
+  useEffect(() => () => {
+    const meshes = [built.coniferMesh, built.broadleafMesh, ...built.detailMeshes, built.detail2Mesh]
+    for (const mesh of meshes) {
+      if (!mesh) continue
+      mesh.geometry.dispose()
+      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+      for (const material of materials) material.dispose()
+      mesh.customDepthMaterial?.dispose()
+      mesh.dispose()
+    }
+  }, [built])
 
-  useFrame(() => {
+  const last = useMemo(() => new Vector3(1e9, 0, 1e9), [built])
+
+  useFrame((_, dt) => {
+    if (!getSettings().reducedMotion) built.breezeTime.value += Math.min(dt, 0.1)
     const p = camera.position
-    if (last.current.distanceTo(p) < REDRAW_AT) return
-    last.current.copy(p)
+    if (last.distanceTo(p) < REDRAW_AT) return
+    last.copy(p)
     scatter(world, built, p.x, p.z)
   })
 
@@ -164,7 +227,13 @@ export function Trees({ world }: { world: World }) {
   )
 }
 
+function isWindblown(kind: DetailKind): boolean {
+  return kind === 'palm' || kind === 'shrub' || kind === 'reed' || kind === 'tuft' || kind === 'ocotillo'
+}
+
 interface Built {
+  density: number
+  breezeTime: { value: number }
   coniferMesh: InstancedMesh
   broadleafMesh: InstancedMesh
   detailMeshes: InstancedMesh[]
@@ -239,6 +308,7 @@ function scatter(world: World, built: Built, cx: number, cz: number) {
         const dx = x - cx
         const dz = z - cz
         const d2 = dx * dx + dz * dz
+        if (cellSeed(Math.floor(x * 4), Math.floor(z * 4), world.seed ^ 0x96a1) / 0xffffffff > built.density) continue
         if (d2 > r2) continue
 
         const h = sampleHeight(hf, x, z)
@@ -263,7 +333,7 @@ function scatter(world: World, built: Built, cx: number, cz: number) {
         const broad = speciesRoll < dayBroadleaf
         const mesh = broad ? built.broadleafMesh : built.coniferMesh
         const index = broad ? nBroadleaf : nConifer
-        if (index >= MAX_PER_SPECIES) continue
+        if (index >= mesh.instanceMatrix.count) continue
 
         // Shrink to nothing at the scatter boundary, so recycling is invisible.
         const edge = 1 - smoothstep(RADIUS * 0.8, RADIUS, Math.sqrt(d2))
@@ -310,7 +380,8 @@ function scatter(world: World, built: Built, cx: number, cz: number) {
           const dx = x - cx
           const dz = z - cz
           const d2 = dx * dx + dz * dz
-          if (d2 > r2 || nDetails[di] >= MAX_DETAIL) continue
+          if (cellSeed(Math.floor(x * 4), Math.floor(z * 4), world.seed ^ 0x96a1) / 0xffffffff > built.density) continue
+          if (d2 > r2 || nDetails[di] >= built.detailMeshes[di].instanceMatrix.count) continue
 
           const h = sampleHeight(hf, x, z)
           if (h < waterY) continue
@@ -380,7 +451,8 @@ function scatter(world: World, built: Built, cx: number, cz: number) {
           const dx = x - cx
           const dz = z - cz
           const d2 = dx * dx + dz * dz
-          if (d2 > r2 || nDetail2 >= MAX_DETAIL2) continue
+          if (cellSeed(Math.floor(x * 4), Math.floor(z * 4), world.seed ^ 0x96a1) / 0xffffffff > built.density) continue
+          if (d2 > r2 || nDetail2 >= built.detail2Mesh.instanceMatrix.count) continue
 
           const h = sampleHeight(hf, x, z)
           if (h < waterY) continue
@@ -446,7 +518,8 @@ function scatter(world: World, built: Built, cx: number, cz: number) {
           const dx = x - cx
           const dz = z - cz
           const d2 = dx * dx + dz * dz
-          if (d2 > r2 || nDetail2 >= MAX_DETAIL2) continue
+          if (cellSeed(Math.floor(x * 4), Math.floor(z * 4), world.seed ^ 0x96a1) / 0xffffffff > built.density) continue
+          if (d2 > r2 || nDetail2 >= built.detail2Mesh.instanceMatrix.count) continue
 
           const h = sampleHeight(hf, x, z)
           if (h < waterY) continue
@@ -518,24 +591,31 @@ function cellSeed(x: number, z: number, seed: number): number {
  * 1.0 on the canopy, dark at the trunk. The per-instance colour then multiplies
  * through, which gives every tree a trunk in its own shade for free.
  */
-function coniferGeometry(trunkTint: number): BufferGeometry {
+function coniferGeometry(trunkTint: number, detailed: boolean): BufferGeometry {
   const parts: Array<{ geo: BufferGeometry; tint: number }> = [
-    { geo: translated(new CylinderGeometry(0.07, 0.1, 0.3, 5), 0, 0.15, 0), tint: trunkTint },
-    { geo: translated(new ConeGeometry(0.5, 0.46, 7), 0, 0.4, 0), tint: 0.78 },
-    { geo: translated(new ConeGeometry(0.38, 0.42, 7), 0, 0.63, 0), tint: 0.92 },
-    { geo: translated(new ConeGeometry(0.24, 0.36, 7), 0, 0.84, 0), tint: 1.0 },
+    { geo: translated(new CylinderGeometry(0.035, 0.08, 0.62, 6), 0, 0.31, 0), tint: trunkTint },
   ]
+  // Staggered, asymmetric branch skirts break the stacked-cone outline.
+  for (let i = 0; i < 6; i++) {
+    const radius = 0.43 * (1 - i / 7)
+    const crown = new ConeGeometry(radius, 0.32, detailed ? 9 : 6)
+    crown.rotateY(i * 2.4)
+    parts.push({ geo: translated(crown, Math.sin(i * 2.4) * 0.035, 0.3 + i * 0.115, Math.cos(i * 2.4) * 0.025), tint: 0.72 + i * 0.052 })
+  }
   return merge(parts)
 }
 
-function broadleafGeometry(trunkTint: number): BufferGeometry {
-  const canopy = new IcosahedronGeometry(0.5, 0)
-  const canopy2 = new IcosahedronGeometry(0.34, 0)
+function broadleafGeometry(trunkTint: number, detailed: boolean): BufferGeometry {
   const parts: Array<{ geo: BufferGeometry; tint: number }> = [
-    { geo: translated(new CylinderGeometry(0.06, 0.09, 0.44, 5), 0, 0.22, 0), tint: trunkTint },
-    { geo: translated(scaled(canopy, 1, 0.82, 1), 0, 0.66, 0), tint: 0.95 },
-    { geo: translated(scaled(canopy2, 1, 0.8, 1), 0.14, 0.9, -0.1), tint: 1.0 },
+    { geo: translated(new CylinderGeometry(0.035, 0.085, 0.58, 6), 0, 0.29, 0), tint: trunkTint },
   ]
+  // Clustered crowns retain holes between lobes and catch the low sun separately.
+  for (let i = 0; i < 7; i++) {
+    const a = i * 2.39996, r = i === 6 ? 0 : 0.23
+    const crown = new IcosahedronGeometry(i === 6 ? 0.32 : 0.28, detailed ? 1 : 0)
+    crown.scale(1, 0.85 + (i % 3) * 0.08, 1)
+    parts.push({ geo: translated(crown, Math.cos(a) * r, 0.65 + (i % 3) * 0.085, Math.sin(a) * r), tint: 0.78 + (i % 4) * 0.065 })
+  }
   return merge(parts)
 }
 

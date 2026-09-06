@@ -731,3 +731,64 @@ canvas {
   text-transform: uppercase;
   color: rgba(255, 205, 140, 0.85);
 }
+
+/* Optional exploration and replay controls. */
+.replayButton, .replayBar button {
+  pointer-events: auto;
+  padding: 10px 16px;
+  min-height: 42px;
+  border: 1px solid rgba(247, 225, 179, 0.4);
+  border-radius: 24px;
+  color: #ffebc7;
+  background: rgba(13, 25, 30, 0.68);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.routeCaption { margin-top: 10px; color: #e4dfd0; font-size: 11px; line-height: 1.6; }
+.routeReadout {
+  position: absolute;
+  right: max(20px, env(safe-area-inset-right));
+  bottom: max(65px, env(safe-area-inset-bottom));
+  max-width: 230px;
+  text-align: right;
+  font-size: 14px;
+  line-height: 1.7;
+}
+.routeEyebrow { text-transform: uppercase; letter-spacing: 0.1em; font-size: 9px; color: #efd6a5; }
+.routeReadout small, .routeResult small { display: block; color: #d0dce0; font-size: 11px; }
+.routeResult { margin: 14px 0 4px; color: #ffe5b4; font-size: 13px; line-height: 1.7; }
+.replayButton { display: block; margin: 14px auto 0; }
+.replaying .instruments { visibility: hidden; }
+.replayBar {
+  position: absolute;
+  bottom: max(28px, env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  width: max-content;
+  max-width: calc(100vw - 40px);
+  padding: 14px 20px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 14px;
+  background: rgba(12, 21, 27, 0.86);
+  font-size: 14px;
+}
+.replayBar small { display: block; margin-top: 4px; color: #b9c8cc; font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; }
+.reducedMotion .speedRush { display: none; }
+.replayButton:focus-visible, .replayBar button:focus-visible {
+  outline: 2px solid #ffe1a7;
+  outline-offset: 4px;
+}
+@media (max-width: 600px) {
+  .routeReadout { top: max(75px, env(safe-area-inset-top)); bottom: auto; right: 16px; font-size: 12px; }
+  .routeEyebrow { max-width: 170px; }
+  .replayBar { gap: 14px; padding: 12px; font-size: 12px; }
+  .prompt, .result { width: calc(100vw - 40px); max-height: calc(100dvh - 130px); overflow-y: auto; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .diorama, .speedRush { display: none; }
+  .veil, .veilText { transition-duration: 0.01ms; animation: none; }
+}

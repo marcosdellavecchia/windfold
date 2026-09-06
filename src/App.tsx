@@ -246,17 +246,6 @@ export default function App() {
   // this it is the one control a pad in hand cannot reach.
   useEffect(() => onPad('mute', music.toggle), [music.toggle])
 
-  // Cast sun shadows — the one real GPU cost in the renderer, so it is a
-  // quality setting rather than a fact: on for anything with a mouse, off for
-  // touch devices (the cheapest usable phone heuristic), and ?shadows=0|1
-  // overrides either way for testing and for anyone whose hardware disagrees
-  // with the guess.
-  const shadowsOn = useMemo(() => {
-    const p = new URLSearchParams(window.location.search).get('shadows')
-    if (p !== null) return p !== '0'
-    return window.matchMedia('(pointer: fine)').matches
-  }, [])
-
   // ?grade= / ?exposure= before the first frame, so an A/B link never shows a
   // frame of the default curve first.
   useMemo(readGradeOverride, [])
@@ -269,7 +258,7 @@ export default function App() {
         owners of `gl.toneMapping` is one too many.
       */}
       <Canvas
-        shadows={shadowsOn ? 'soft' : false}
+        shadows="soft"
         dpr={[1, 1.75]}
         gl={{ antialias: true, powerPreference: 'high-performance' }}
         // near 1.2, not 0.5: depth precision scales with the near plane, and the
@@ -280,7 +269,7 @@ export default function App() {
         <Scene
           world={world}
           par={par}
-          shadows={shadowsOn}
+          shadows
           onWorldReady={onWorldReady}
           rests={rests}
           onFlightRested={onFlightRested}

@@ -1,9 +1,11 @@
 import { forwardRef, useMemo, useRef, type RefObject } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
-import { BufferAttribute, BufferGeometry, Color, DoubleSide, Group, MeshLambertMaterial, Vector3 } from 'three'
+import { BufferAttribute, BufferGeometry, Color, DoubleSide, Group, MeshStandardMaterial, Vector3 } from 'three'
 import type { World } from '../sim/world'
 import { rgbToHex } from '../sim/palette'
 import { cloudShadowSeed } from './atmosphere'
+import { getSettings } from '../game/settings'
+import { flightVisual } from './presentation'
 
 /**
  * A folded dart, procedural like everything else — the "ship no 3D model
@@ -21,12 +23,15 @@ import { cloudShadowSeed } from './atmosphere'
 export const PaperPlane = forwardRef<Group, { world: World }>(function PaperPlane({ world }, ref) {
   const camera = useThree((s) => s.camera)
   const geometry = useMemo(() => buildDart(), [])
+  const paperBase = useMemo(() => (geometry.getAttribute('position').array as Float32Array).slice(), [geometry])
 
   const material = useMemo(() => {
-    const mat = new MeshLambertMaterial({
+    const mat = new MeshStandardMaterial({
       color: 0xfffdf6,
       emissive: rgbToHex(world.palette.high),
-      emissiveIntensity: 0.3,
+      emissiveIntensity: 0.07,
+      roughness: 0.84,
+      metalness: 0,
       side: DoubleSide,
       flatShading: true,
       vertexColors: true,
@@ -37,10 +42,37 @@ export const PaperPlane = forwardRef<Group, { world: World }>(function PaperPlan
     mat.onBeforeCompile = (shader) => {
       shader.uniforms.uSunView = uSunView
       shader.uniforms.uSunCol = uSunCol
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nvarying vec3 vPaperPosition;\nattribute vec3 foldEdge;\nvarying vec3 vFoldEdge;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvPaperPosition = position;\nvFoldEdge = foldEdge;')
       shader.fragmentShader = shader.fragmentShader
         .replace(
           '#include <common>',
-          '#include <common>\nuniform vec3 uSunView;\nuniform vec3 uSunCol;',
+          `#include <common>
+          uniform vec3 uSunView;
+          uniform vec3 uSunCol;
+          varying vec3 vPaperPosition;
+          varying vec3 vFoldEdge;
+          float paperHash(vec2 p) {
+            p = fract(p * vec2(123.34, 456.21));
+            p += dot(p, p + 45.32);
+            return fract(p.x * p.y);
+          }`,
+        )
+        .replace(
+          '#include <color_fragment>',
+          `#include <color_fragment>
+          {
+            // A faint fibre grain and compressed, darker fold edges. Filter the
+            // grain away before it becomes subpixel during the launch orbit.
+            vec2 paperUV = vPaperPosition.xz * 210.0;
+            float footprint = max(length(dFdx(paperUV)), length(dFdy(paperUV)));
+            float grain = (paperHash(floor(paperUV)) - 0.5)
+                        * (1.0 - smoothstep(0.5, 1.5, footprint));
+            vec3 edge = smoothstep(vec3(0.0), max(fwidth(vFoldEdge) * 0.85, vec3(0.0001)), vFoldEdge);
+            float crease = 1.0 - min(min(edge.x, edge.y), edge.z);
+            diffuseColor.rgb *= 1.0 + grain * 0.055 - crease * 0.13;
+          }`,
         )
         .replace(
           '#include <emissivemap_fragment>',
@@ -71,6 +103,19 @@ export const PaperPlane = forwardRef<Group, { world: World }>(function PaperPlan
     const dt = Math.min(rawDt, 0.1)
     const s = shade.current
     s.t += dt
+    const visual = flightVisual
+    const positions = geometry.getAttribute('position')
+    const moving = visual.phase === 'flying' || visual.replaying
+    const calm = getSettings().reducedMotion
+    const flex = moving ? Math.min(0.09, Math.max(0, visual.lift) * 0.009 + visual.speed * 0.0005) : 0
+    for (let i = 0; i < positions.count; i++) {
+      const x = paperBase[i * 3], z = paperBase[i * 3 + 2]
+      const wing = Math.max(0, (Math.abs(x) - 0.4) / 1.3)
+      const flutter = moving && !calm ? Math.sin(visual.time * (21 + visual.stall * 12) + Math.sign(x) * 1.8) * (0.008 + visual.stall * 0.06) : 0
+      positions.setY(i, paperBase[i * 3 + 1] + wing * wing * (flex + flutter) * Math.max(0, (z + 2.4) / 4.25))
+    }
+    positions.needsUpdate = true
+    geometry.computeVertexNormals()
 
     // Sun direction into view space for the transmission term.
     ;(material.userData.uSunView.value as Vector3)
@@ -95,11 +140,11 @@ const PAPER = new Color(0xfffdf6)
 
 /** TypeScript twin of atmosphere.ts's cloudShadow — keep the constants matched. */
 function cloudShadowTS(x: number, z: number, wx: number, wz: number, t: number, seed: number): number {
-  const px = (x - wx * t * 1.6) / 950 + seed
-  const pz = (z - wz * t * 1.6) / 950 + seed
-  const n = csNoise(px, pz) * 0.65 + csNoise(px * 2.7 + 13.1, pz * 2.7 + 13.1) * 0.35
-  const s = Math.min(Math.max((n - 0.52) / (0.8 - 0.52), 0), 1)
-  return 1 - s * s * (3 - 2 * s) * 0.16
+  const px = (x - wx * t * 1.6) / 1350 + seed
+  const pz = (z - wz * t * 1.6) / 1350 + seed
+  const n = csNoise(px, pz) * 0.7 + csNoise(px * 2.3 + 13.1, pz * 2.3 + 13.1) * 0.3
+  const s = Math.min(Math.max((n - 0.48) / (0.92 - 0.48), 0), 1)
+  return 1 - s * s * (3 - 2 * s) * 0.14
 }
 
 function csHash(x: number, z: number): number {
@@ -242,8 +287,10 @@ export function buildDart(): BufferGeometry {
 
   const positions = new Float32Array(tris.length * 9)
   const colors = new Float32Array(tris.length * 9)
+  const edges = new Float32Array(tris.length * 9)
   for (let i = 0; i < tris.length; i++) {
     for (let v = 0; v < 3; v++) {
+      edges[i * 9 + v * 3 + v] = 1
       positions[i * 9 + v * 3] = tris[i][v][0]
       positions[i * 9 + v * 3 + 1] = tris[i][v][1]
       positions[i * 9 + v * 3 + 2] = tris[i][v][2]
@@ -256,6 +303,7 @@ export function buildDart(): BufferGeometry {
   const geo = new BufferGeometry()
   geo.setAttribute('position', new BufferAttribute(positions, 3))
   geo.setAttribute('color', new BufferAttribute(colors, 3))
+  geo.setAttribute('foldEdge', new BufferAttribute(edges, 3))
   geo.computeVertexNormals()
   return geo
 }

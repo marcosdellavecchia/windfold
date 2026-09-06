@@ -143,6 +143,8 @@ export class Flight {
   /** Instant restart: state reset and nothing more. No allocation of the world. */
   reset() {
     this.phase = 'ready'
+    this.turbo = false
+    this.cheated = false
     this.time = 0
     this.distance = 0
     this.landed = false

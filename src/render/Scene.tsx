@@ -7,6 +7,7 @@ import {
   Matrix4,
   Mesh,
   MeshBasicMaterial,
+  Quaternion,
   Vector3,
   type PerspectiveCamera,
 } from 'three'
@@ -39,6 +40,15 @@ import { ToneMapping } from './grade'
 import { Thermals } from './Thermals'
 import { PaperPlane, buildDartShadow } from './PaperPlane'
 import { Trail } from './Trail'
+import { GroundCover } from './GroundCover'
+import { Formations } from './Formations'
+import { Touchdown } from './Touchdown'
+import { Routes } from './Routes'
+import { flightVisual } from './presentation'
+import { getSettings, useSettings } from '../game/settings'
+import { ApproachReplay, setReplayHandler, type ReplayPose } from '../game/replay'
+import { buildRoute, RouteProgress } from '../game/routes'
+import { sampleHeight } from '../sim/terrain'
 
 export function Scene({
   world,
@@ -84,6 +94,9 @@ export function Scene({
       <Sky world={world} />
       <Terrain world={world} />
       <Trees world={world} />
+      <Formations world={world} />
+      <GroundCover world={world} />
+      <Touchdown world={world} />
       <Water world={world} />
       <Streams world={world} />
       <Thermals world={world} />
@@ -111,7 +124,6 @@ export function Scene({
 
 /** Half-extent of the shadow camera's box, metres. */
 const SHADOW_HALF = 1600
-const SHADOW_MAP = 2048
 
 /**
  * The day's sun, and — on hardware that can afford it — its shadows.
@@ -139,6 +151,7 @@ function SunLight({
   shadows: boolean
 }) {
   const ref = useRef<DirectionalLight>(null)
+  const shadowMap = 2048
 
   // A fixed basis across the light's plane, for the texel snapping.
   const basis = useMemo(() => {
@@ -151,7 +164,7 @@ function SunLight({
     const l = ref.current
     const p = planeRef.current
     if (!l || !p) return
-    const texel = (2 * SHADOW_HALF) / SHADOW_MAP
+    const texel = (2 * SHADOW_HALF) / shadowMap
     const s = SNAP.copy(p.position)
     const r = Math.round(s.dot(basis.right) / texel) * texel
     const u = Math.round(s.dot(basis.up) / texel) * texel
@@ -168,13 +181,14 @@ function SunLight({
 
   return (
     <directionalLight
+      key={shadowMap}
       ref={ref}
       color={rgbToHex(world.palette.sunLight)}
       intensity={2.1}
       position={[world.sunDir.x * 3000, world.sunDir.y * 3000, world.sunDir.z * 3000]}
       castShadow={shadows}
-      shadow-mapSize-width={SHADOW_MAP}
-      shadow-mapSize-height={SHADOW_MAP}
+      shadow-mapSize-width={shadowMap}
+      shadow-mapSize-height={shadowMap}
       shadow-camera-left={-SHADOW_HALF}
       shadow-camera-right={SHADOW_HALF}
       shadow-camera-top={SHADOW_HALF}
@@ -223,6 +237,14 @@ function Simulation({ world, par, planeRef, trail, onWorldReady, onFlightRested 
     [world],
   )
 
+  const settings = useSettings()
+  const route = useMemo(() => buildRoute(world), [world])
+  const progress = useMemo(() => new RouteProgress(), [world])
+  const replay = useMemo(() => new ApproachReplay(), [world])
+  const display = useMemo<ReplayPose>(() => ({ time: 0, position: new Vector3(), rotation: new Quaternion(), speed: 0, lift: 0, stall: 0 }), [])
+  const beforeStep = useMemo(() => new Vector3(), [])
+  const finishPose = useMemo(() => ({ age: 0, rotation: new Quaternion() }), [world])
+  const cameraMotion = useRef({ lift: 0, time: 0, replaying: false })
   const stats = useRef({ best: 0, attempts: 0 })
   // The session's saved state — records per world, the in-flight marker.
   // One instance, shared with the HUD's share card.
@@ -267,7 +289,23 @@ function Simulation({ world, par, planeRef, trail, onWorldReady, onFlightRested 
   })
 
   useEffect(() => {
+    setReplayHandler((action) => {
+      if (action === 'start' && flight.phase === 'down') replay.start()
+      else replay.stop()
+      cam.current.ready = false
+      writeHud({ replaying: replay.active })
+      flushHud(0, true)
+    })
+    return () => setReplayHandler(() => {})
+  }, [flight, replay])
+
+  useEffect(() => {
     const launch = () => {
+      replay.reset()
+      progress.reset()
+      finishPose.age = 0
+      replay.record(0, flight.pos, flight.quat, flight.airspeed, 0, 0)
+      writeHud({ replaying: false, replayAvailable: false, routeGates: 0, routeLanding: false, landmarkFound: false })
       // Counted and persisted before the first physics tick — bailing out
       // must never be cheaper than crashing.
       noteLaunch(saved, world.day)
@@ -288,7 +326,7 @@ function Simulation({ world, par, planeRef, trail, onWorldReady, onFlightRested 
       }
     })
     return () => setCommitHandler(() => {})
-  }, [flight, trail, world, saved])
+  }, [flight, trail, world, saved, replay, progress, finishPose])
 
   // A world change loads that world's record — the best and attempt count of
   // a linked or revisited world carry across sessions.
@@ -297,9 +335,12 @@ function Simulation({ world, par, planeRef, trail, onWorldReady, onFlightRested 
     stats.current = { best: rec.best, attempts: rec.attempts }
     writeHud({ best: rec.best, attempts: rec.attempts })
     cam.current.ready = false
+    prevPhase.current = flight.phase
+    cameraMotion.current = { lift: 0, time: 0, replaying: false }
+    writeHud({ phase: 'ready', replaying: false, replayAvailable: false, routeGates: 0, routeTotal: route.gates.length, routeTitle: route.title, routeHasLanding: route.landing !== null, routeLanding: false, landmarkFound: false, cheated: false, landed: false, newBest: false })
     trail.clear()
     setGhosts({ attempts: [], best: null })
-  }, [world, trail, saved])
+  }, [world, trail, saved, flight, route])
 
   const scratch = useMemo(
     () => ({
@@ -334,7 +375,11 @@ function Simulation({ world, par, planeRef, trail, onWorldReady, onFlightRested 
     if (flight.turbo && !turbo) flight.endTurbo()
     flight.turbo = turbo
 
+    beforeStep.copy(flight.pos)
+    const wasFlying = flight.phase === 'flying'
     flight.update(dt, axis)
+    if (wasFlying && getSettings().routes) progress.update(route, world, beforeStep, flight)
+    if (wasFlying) replay.record(flight.time, flight.pos, flight.quat, flight.airspeed, flight.airLift, flight.stallFactor, flight.phase === 'down')
 
     if (flight.phase === 'flying') {
       trail.update(dt, flight.pos.x, flight.pos.y, flight.pos.z)
@@ -351,6 +396,23 @@ function Simulation({ world, par, planeRef, trail, onWorldReady, onFlightRested 
     const phaseChanged = prevPhase.current !== flight.phase
     if (phaseChanged) {
       if (flight.phase === 'down') {
+        replay.finish()
+        finishPose.age = 0
+        sampleGradient(world.heightfield, flight.pos.x, flight.pos.z, GRAD)
+        const water = world.heightfield.hasWater && sampleHeight(world.heightfield, flight.pos.x, flight.pos.z) < world.heightfield.waterLevel
+        NORMAL.set(water ? 0 : -GRAD.x, 1, water ? 0 : -GRAD.z).normalize()
+        SHADOW_Z.set(0, 0, 1).applyQuaternion(flight.quat)
+        SHADOW_Z.addScaledVector(NORMAL, -SHADOW_Z.dot(NORMAL)).normalize()
+        SHADOW_X.crossVectors(NORMAL, SHADOW_Z).normalize()
+        BASIS.makeBasis(SHADOW_X, NORMAL, SHADOW_Z)
+        finishPose.rotation.setFromRotationMatrix(BASIS)
+        // Leaving the map is not an impact, and must not throw dust into the sky.
+        if (flight.aglHeight < 3) {
+          flightVisual.touchdown++
+          flightVisual.impactPosition.copy(flight.pos)
+          flightVisual.impactPosition.y = surfaceHeight(world.heightfield, flight.pos.x, flight.pos.z)
+          flightVisual.impactWater = water
+        }
         const d = flight.distance
         // A flight that used the debug turbo is not a flight. It never touches
         // the day's record and it never reaches the presence layer — that
@@ -386,33 +448,45 @@ function Simulation({ world, par, planeRef, trail, onWorldReady, onFlightRested 
       prevPhase.current = flight.phase
     }
 
-    // --- plane transform ----------------------------------------------------
-    const plane = planeRef.current
-    if (plane) {
-      plane.position.copy(flight.pos)
-      plane.quaternion.copy(flight.quat)
+    // Replay reads a separate pose buffer. The simulation remains down, so no
+    // distance, attempts, route progress, or network submissions can be replayed.
+    const replaying = replay.sample(dt, display)
+    if (!replaying) {
+      display.position.copy(flight.pos); display.rotation.copy(flight.quat)
+      display.time = flight.time; display.speed = flight.airspeed; display.lift = flight.airLift; display.stall = flight.stallFactor
     }
+    if (flight.phase === 'down' && !replaying && flight.aglHeight < 3) {
+      finishPose.age += dt
+      const settle = 1 - Math.exp(-finishPose.age * 3.5)
+      display.position.y -= settle * 0.55
+      if (flight.landed) display.rotation.slerp(finishPose.rotation, settle)
+    }
+    Object.assign(flightVisual, { phase: flight.phase, speed: display.speed, lift: display.lift, stall: display.stall, time: display.time, replaying, landed: flight.landed })
+    flightVisual.position.copy(display.position); flightVisual.rotation.copy(display.rotation)
+    const plane = planeRef.current
+    if (plane) { plane.position.copy(display.position); plane.quaternion.copy(display.rotation) }
 
     // --- ground shadow --------------------------------------------------------
-    const groundY = flight.pos.y - flight.aglHeight
-    const fade = 1 - MathUtils.smoothstep(flight.aglHeight, 14, 70)
+    const groundY = surfaceHeight(world.heightfield, display.position.x, display.position.z)
+    const displayAltitude = display.position.y - groundY
+    const fade = 1 - MathUtils.smoothstep(displayAltitude, 14, 70)
     const blobMat = blob.material as MeshBasicMaterial
     if (fade <= 0.02) {
       blobMat.opacity = 0
     } else {
       blobMat.opacity = 0.3 * fade
-      blob.position.set(flight.pos.x, groundY + 0.4, flight.pos.z)
+      blob.position.set(display.position.x, groundY + 0.4, display.position.z)
 
       // Lie on the slope rather than hovering flat inside it, *and* point where
       // the aircraft points. A disc needed only the first of those, which is why
       // it never had a heading — and why on short final, when the shadow is the
       // thing you are looking at, it was the one object in the frame admitting
       // it was a stand-in.
-      sampleGradient(world.heightfield, flight.pos.x, flight.pos.z, GRAD)
+      sampleGradient(world.heightfield, display.position.x, display.position.z, GRAD)
       NORMAL.set(-GRAD.x, 1, -GRAD.z).normalize()
       // Heading flattened onto the slope: the component along the ground normal
       // is removed, so a climbing aircraft does not foreshorten its own shadow.
-      SHADOW_Z.set(0, 0, 1).applyQuaternion(flight.quat)
+      SHADOW_Z.set(0, 0, 1).applyQuaternion(display.rotation)
       SHADOW_Z.addScaledVector(NORMAL, -SHADOW_Z.dot(NORMAL))
       if (SHADOW_Z.lengthSq() < 1e-6) SHADOW_Z.set(0, 0, 1)
       SHADOW_Z.normalize()
@@ -423,25 +497,25 @@ function Simulation({ world, par, planeRef, trail, onWorldReady, onFlightRested 
       // Wider and softer as the plane climbs, like a real penumbra — and
       // narrower across the wings as it banks, because a shadow is the aircraft
       // seen from underneath and a knife-edge one has almost no width to cast.
-      const grow = 0.95 + flight.aglHeight * 0.035
+      const grow = 0.95 + displayAltitude * 0.035
       blob.scale.set(grow * (0.34 + 0.66 * Math.abs(Math.cos(flight.bank))), grow, grow)
     }
 
     // --- camera -------------------------------------------------------------
-    scratch.fwd.set(0, 0, -1).applyQuaternion(flight.quat)
-    scratch.up.set(0, 1, 0).applyQuaternion(flight.quat)
+    scratch.fwd.set(0, 0, -1).applyQuaternion(display.rotation)
+    scratch.up.set(0, 1, 0).applyQuaternion(display.rotation)
 
     // Once the flight is over, ease out to a wider, level vantage. Holding the
     // chase position leaves the camera pressed against the hillside the player
     // just hit, and the results screen renders over a wall of flat green.
-    const down = flight.phase === 'down'
-    const distance = down ? TUNING.camCrashDistance : TUNING.camDistance
+    const down = flight.phase === 'down' && !replaying
+    const distance = down ? TUNING.camCrashDistance : replaying ? TUNING.camDistance * 1.35 : TUNING.camDistance
     const height = down ? TUNING.camCrashHeight : TUNING.camHeight
 
     // Blend the aircraft's own up toward world up: the horizon tilts with the
     // roll, which is what makes banking read on screen, but not so far that the
     // world turns upside down in a hard turn.
-    scratch.tilt.set(0, 1, 0).lerp(scratch.up, down ? 0 : TUNING.camRoll).normalize()
+    scratch.tilt.set(0, 1, 0).lerp(scratch.up, down || settings.reducedMotion ? 0 : TUNING.camRoll).normalize()
 
     const c = cam.current
     const lag = 1 - Math.exp(-TUNING.camLag * dt)
@@ -461,12 +535,12 @@ function Simulation({ world, par, planeRef, trail, onWorldReady, onFlightRested 
       if (scratch.flat.lengthSq() < 1e-6) scratch.flat.set(0, 0, -1)
       scratch.flat.normalize()
       scratch.desired
-        .copy(flight.pos)
+        .copy(display.position)
         .addScaledVector(scratch.flat, -distance)
         .addScaledVector(scratch.tilt, height)
     } else {
       scratch.desired
-        .copy(flight.pos)
+        .copy(display.position)
         .addScaledVector(c.fwd, -distance)
         .addScaledVector(c.up, height)
     }
@@ -483,15 +557,23 @@ function Simulation({ world, par, planeRef, trail, onWorldReady, onFlightRested 
       c.pos.lerp(scratch.desired, lag)
     }
 
+    // Smooth lift entry has a small heave; stall buffet never changes steering.
+    const motion = cameraMotion.current
+    motion.time += dt
+    motion.lift += (Math.max(0, display.lift) - motion.lift) * (1 - Math.exp(-dt * 2.5))
     camera.position.copy(c.pos)
+    if (!down && !settings.reducedMotion) {
+      camera.position.y += Math.min(motion.lift, 5) * 0.08 + Math.sin(motion.time * 27) * display.stall * 0.035
+    }
+    camera.position.y = Math.max(camera.position.y, surfaceHeight(world.heightfield, camera.position.x, camera.position.z) + clearance)
     camera.up.copy(c.up)
     // Aim off the aircraft's true forward, not the lagged one. The position lag
     // gives the camera its trailing feel; letting the aim lag as well lets the
     // plane swing out of frame in a hard dive.
-    scratch.look.copy(flight.pos).addScaledVector(scratch.fwd, down ? 0 : TUNING.camLookAhead)
+    scratch.look.copy(display.position).addScaledVector(scratch.fwd, down ? 0 : TUNING.camLookAhead)
     camera.lookAt(scratch.look)
 
-    const rush = MathUtils.clamp((flight.airspeed - 22) / 45, 0, 1)
+    const rush = MathUtils.clamp((display.speed - 22) / 45, 0, 1)
     // Debug turbo widens the lens past anything a real airspeed can reach — and
     // eases in and out rather than switching, because the punch on entry and the
     // settle on release are most of what sells the speed. Snapping straight to a
@@ -499,16 +581,25 @@ function Simulation({ world, par, planeRef, trail, onWorldReady, onFlightRested 
     // pins `rush` on its own, since it reports 165 m/s airspeed; this is the
     // part on top that says "and this is not normal flight".
     turboEase.current += ((flight.turbo ? 1 : 0) - turboEase.current) * (1 - Math.pow(0.004, dt))
-    const fov = TUNING.fov + TUNING.fovSpeedGain * rush + TURBO_FOV * turboEase.current
+    const fov = TUNING.fov + (settings.reducedMotion ? 0 : TUNING.fovSpeedGain * rush + TURBO_FOV * turboEase.current)
     const persp = camera as PerspectiveCamera
     if (Math.abs(persp.fov - fov) > 0.05) {
       persp.fov = fov
       persp.updateProjectionMatrix()
     }
 
+    const target = route.gates[progress.gates]?.position ?? route.landing
+    const targetX = target ? target.x - flight.pos.x : 0, targetZ = target ? target.z - flight.pos.z : 0
     // --- hud ----------------------------------------------------------------
     writeHud({
       phase: flight.phase,
+      replaying,
+      replayAvailable: replay.available,
+      routeGates: progress.gates,
+      routeLanding: progress.landed,
+      landmarkFound: progress.discovered,
+      routeDistance: target ? flight.pos.distanceTo(target) : 0,
+      routeTurn: Math.atan2(scratch.fwd.x * targetZ - scratch.fwd.z * targetX, scratch.fwd.x * targetX + scratch.fwd.z * targetZ),
       distance: flight.distance,
       best: stats.current.best,
       attempts: stats.current.attempts,
@@ -520,12 +611,14 @@ function Simulation({ world, par, planeRef, trail, onWorldReady, onFlightRested 
       turbo: flight.turbo,
       cheated: flight.cheated,
     })
-    flushHud(dt, phaseChanged)
-  })
+    flushHud(dt, phaseChanged || cameraMotion.current.replaying !== replaying)
+    cameraMotion.current.replaying = replaying
+  }, -1)
 
   return (
     <>
       <Ghosts data={ghosts} />
+      {settings.routes && <Routes route={route} world={world} />}
       <primitive object={blob} />
     </>
   )

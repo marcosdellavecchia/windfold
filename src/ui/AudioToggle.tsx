@@ -10,8 +10,8 @@ export function AudioToggle({ muted, onToggle }: { muted: boolean; onToggle: () 
       className="audioToggle"
       data-ui
       onClick={onToggle}
-      aria-label={muted ? 'Turn music on' : 'Turn music off'}
-      title={muted ? 'Music off' : 'Music on'}
+      aria-label={muted ? 'Turn sound on' : 'Turn sound off'}
+      title={muted ? 'Sound off' : 'Sound on'}
     >
       <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
         <path

@@ -43,7 +43,7 @@ let captured = false
  */
 export function isTyping(e: KeyboardEvent): boolean {
   const t = e.target as HTMLElement | null
-  return !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
+  return !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.tagName === 'BUTTON' || t.tagName === 'SUMMARY' || t.isContentEditable)
 }
 
 /**
@@ -170,7 +170,6 @@ export function attachInput(target: HTMLElement | Window = window): () => void {
   }
 
   const onKeyUp = (e: KeyboardEvent) => {
-    if (isTyping(e)) return
     switch (e.code) {
       case 'ArrowLeft':
       case 'KeyA':
@@ -212,6 +211,7 @@ export function attachInput(target: HTMLElement | Window = window): () => void {
   // The window loses the button entirely when focus goes elsewhere mid-hold —
   // alt-tab, a devtools panel — and no pointerup ever arrives.
   const onBlur = () => {
+    keys.left = keys.right = keys.up = keys.down = false
     turboHeld = false
   }
 

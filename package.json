@@ -11,7 +11,8 @@
     "sim:check": "esbuild src/dev/glideTest.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/glideTest.mjs --log-level=warning && node node_modules/.cache/glideTest.mjs",
     "shader:check": "esbuild src/dev/shaderCheck.mjs --bundle --platform=node --format=esm --outfile=node_modules/.cache/shaderCheck.mjs --log-level=warning && node node_modules/.cache/shaderCheck.mjs",
     "river:check": "esbuild src/dev/riverCheck.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/riverCheck.mjs --log-level=warning && node node_modules/.cache/riverCheck.mjs",
-    "river:map": "esbuild src/dev/riverMap.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/riverMap.mjs --log-level=warning && node node_modules/.cache/riverMap.mjs"
+    "river:map": "esbuild src/dev/riverMap.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/riverMap.mjs --log-level=warning && node node_modules/.cache/riverMap.mjs",
+    "presentation:check": "esbuild src/dev/presentationCheck.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/presentationCheck.mjs --log-level=warning && node node_modules/.cache/presentationCheck.mjs"
   },
   "dependencies": {
     "@react-three/fiber": "^9.0.0",

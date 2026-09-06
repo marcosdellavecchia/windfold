@@ -8,6 +8,16 @@ import type { Phase } from './sim/flight'
  */
 export interface HudState {
   phase: Phase
+  replaying: boolean
+  replayAvailable: boolean
+  routeGates: number
+  routeTotal: number
+  routeTitle: string
+  routeDistance: number
+  routeTurn: number
+  routeLanding: boolean
+  routeHasLanding: boolean
+  landmarkFound: boolean
   distance: number
   best: number
   attempts: number
@@ -38,6 +48,16 @@ const HUD_HZ = 12
 
 const draft: HudState = {
   phase: 'ready',
+  replaying: false,
+  replayAvailable: false,
+  routeGates: 0,
+  routeTotal: 0,
+  routeTitle: '',
+  routeDistance: 0,
+  routeTurn: 0,
+  routeLanding: false,
+  routeHasLanding: false,
+  landmarkFound: false,
   distance: 0,
   best: 0,
   attempts: 0,

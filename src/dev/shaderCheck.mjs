@@ -79,7 +79,7 @@ for (const file of files) {
     .replace(/\bCLOUD_SHADOW_GLSL\b/g, CLOUD_SHADOW_GLSL)
     .replace(/\bAIR_FOG_GLSL\b/g, AIR_FOG_GLSL)
     .replace(/\bWATER_OPTICS_GLSL\b/g, WATER_OPTICS_GLSL)
-  if (!/\b(gl_FragColor|gl_Position|void main)\b/.test(glsl)) continue
+  if (!/\b(gl_FragColor|gl_Position|void main)\b/.test(glsl) && !src.includes('onBeforeCompile')) continue
   checked++
 
   const declared = new Set([...glsl.matchAll(/\buniform\s+\w+\s+(u[A-Z]\w*)\s*;/g)].map((m) => m[1]))

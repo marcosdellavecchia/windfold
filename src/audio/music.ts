@@ -54,6 +54,9 @@ export class Music {
   private wet: GainNode | null = null
   private tone: BiquadFilterNode | null = null
   private shimmer: GainNode | null = null
+  private windGain: GainNode | null = null
+  private windFilter: BiquadFilterNode | null = null
+  private paperGain: GainNode | null = null
   private timer: number | null = null
   private nextBar = 0
   private bar = 0
@@ -163,6 +166,26 @@ export class Music {
     this.tone = tone
     this.shimmer = shimmer
 
+    // One generated air buffer, two filtered voices: rushing air and dry paper.
+    const noise = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate)
+    const data = noise.getChannelData(0)
+    const rng = mulberry32(this.seed ^ 0xa17f)
+    let previous = 0
+    for (let i = 0; i < data.length; i++) {
+      previous = (previous + (rng() * 2 - 1) * 0.12) / 1.12
+      data[i] = previous * 3
+    }
+    const source = ctx.createBufferSource()
+    source.buffer = noise; source.loop = true
+    const wind = ctx.createGain(); wind.gain.value = 0
+    const windFilter = ctx.createBiquadFilter(); windFilter.type = 'lowpass'; windFilter.frequency.value = 450
+    const paper = ctx.createGain(); paper.gain.value = 0
+    const paperFilter = ctx.createBiquadFilter(); paperFilter.type = 'bandpass'; paperFilter.frequency.value = 1900; paperFilter.Q.value = 0.9
+    source.connect(windFilter); windFilter.connect(wind); wind.connect(master)
+    source.connect(paperFilter); paperFilter.connect(paper); paper.connect(master)
+    source.start()
+    this.windGain = wind; this.windFilter = windFilter; this.paperGain = paper
+
     this.nextBar = ctx.currentTime + 0.35
     this.timer = window.setInterval(this.tick, TICK_MS)
     this.tick()
@@ -177,6 +200,7 @@ export class Music {
     this.tone = null
     this.shimmer = null
     this.started = false
+    this.windGain = null; this.windFilter = null; this.paperGain = null
   }
 
   /**
@@ -198,6 +222,16 @@ export class Music {
     if (!this.ctx || !this.tone) return
     const t = Math.min(Math.max(t01, 0), 1)
     this.tone.frequency.setTargetAtTime(2600 + t * 1800, this.ctx.currentTime, 0.8)
+  }
+
+  setFlight(speed: number, stall: number, flying: boolean) {
+    if (!this.ctx || !this.windGain || !this.windFilter || !this.paperGain) return
+    const rush = Math.min(Math.max(speed / 65, 0), 1)
+    const now = this.ctx.currentTime
+    this.windGain.gain.setTargetAtTime(flying ? 0.025 + rush * rush * 0.3 : 0, now, 0.25)
+    this.windFilter.frequency.setTargetAtTime(350 + rush * 2200, now, 0.3)
+    const flutter = 0.65 + Math.sin(now * 23) * 0.35
+    this.paperGain.gain.setTargetAtTime(flying ? (0.012 + stall * 0.15) * flutter : 0, now, 0.04)
   }
 
   /** A gentle landing gets a resolved tonic-and-fifth, in the day's key. */

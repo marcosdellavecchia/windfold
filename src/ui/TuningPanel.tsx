@@ -6,6 +6,7 @@ import { onPad } from '../gamepad'
 import { hudDraft } from '../state'
 import type { World } from '../sim/world'
 import { GRADE, TONE_MODES, resetGrade } from '../render/grade'
+import { changeSettings, useSettings } from '../game/settings'
 
 interface Row {
   key: keyof Tuning
@@ -77,6 +78,7 @@ const randomDayForBiome = (i: number) => {
 export function TuningPanel({ day, onDay, world }: { day: number; onDay: (d: number) => void; world: World }) {
   const [open, setOpen] = useState(false)
   const [, bump] = useState(0)
+  const settings = useSettings()
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -243,6 +245,15 @@ export function TuningPanel({ day, onDay, world }: { day: number; onDay: (d: num
       */}
       <div className="tuneGroup">
         <div className="tuneGroupName">debug</div>
+        <div className="tuneRow">
+          <label>scenic route</label>
+          <input
+            type="checkbox"
+            checked={settings.routes}
+            onChange={(e) => changeSettings({ routes: e.target.checked })}
+          />
+          <span className="num">optional route</span>
+        </div>
         <div className="tuneRow">
           <label>turbo</label>
           <input
